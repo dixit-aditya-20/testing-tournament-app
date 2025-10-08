@@ -41,7 +41,8 @@ class _TournamentListScreenState extends State<TournamentListScreen> {
       // Load directly from Firestore with proper query
       final snapshot = await _firestore
           .collection('tournaments')
-          .where('gameName', isEqualTo: widget.gameName)
+          .where('basicInfo.gameName', isEqualTo: widget.gameName)
+          .where('basicInfo.status', whereIn: ['upcoming', 'live'])
           .get();
 
       print('📊 Firestore returned ${snapshot.docs.length} tournaments for ${widget.gameName}');
@@ -51,10 +52,7 @@ class _TournamentListScreenState extends State<TournamentListScreen> {
 
         for (var doc in snapshot.docs) {
           try {
-            final data = doc.data();
-            print('🎯 Processing tournament: ${data['tournamentName']}');
-
-            final tournament = Tournament.fromMap(data);
+            final tournament = Tournament.fromFirestore(doc);
             loadedTournaments.add(tournament);
           } catch (e) {
             print('❌ Error parsing tournament: $e');
@@ -91,6 +89,8 @@ class _TournamentListScreenState extends State<TournamentListScreen> {
   }
 
   List<Tournament> _getMockTournaments() {
+    final now = DateTime.now();
+
     return [
       // BGMI Tournaments
       if (widget.gameName == 'BGMI') ...[
@@ -101,10 +101,15 @@ class _TournamentListScreenState extends State<TournamentListScreen> {
           entryFee: 50.0,
           totalSlots: 100,
           registeredPlayers: 45,
-          registrationEnd: DateTime.now().add(Duration(days: 2, hours: 5)),
-          tournamentStart: DateTime.now().add(Duration(days: 3)),
+          registrationEnd: now.add(Duration(days: 2, hours: 5)),
+          tournamentStart: now.add(Duration(days: 3)),
           imageUrl: 'https://w0.peakpx.com/wallpaper/742/631/HD-wallpaper-bgmi-trending-pubg-bgmi-iammsa-pubg.jpg',
           tournamentId: 'BGMI001',
+          region: 'Global',
+          platform: 'Mobile',
+          prizePool: 5000.0,
+          tournamentType: 'Solo',
+          status: 'upcoming',
         ),
         Tournament(
           id: 'bgmi_tournament_2',
@@ -113,10 +118,15 @@ class _TournamentListScreenState extends State<TournamentListScreen> {
           entryFee: 30.0,
           totalSlots: 50,
           registeredPlayers: 32,
-          registrationEnd: DateTime.now().add(Duration(days: 1, hours: 3)),
-          tournamentStart: DateTime.now().add(Duration(days: 2)),
+          registrationEnd: now.add(Duration(days: 1, hours: 3)),
+          tournamentStart: now.add(Duration(days: 2)),
           imageUrl: 'https://w0.peakpx.com/wallpaper/742/631/HD-wallpaper-bgmi-trending-pubg-bgmi-iammsa-pubg.jpg',
           tournamentId: 'BGMI002',
+          region: 'India',
+          platform: 'Mobile',
+          prizePool: 1500.0,
+          tournamentType: 'Squad',
+          status: 'upcoming',
         ),
       ],
 
@@ -129,10 +139,15 @@ class _TournamentListScreenState extends State<TournamentListScreen> {
           entryFee: 25.0,
           totalSlots: 80,
           registeredPlayers: 28,
-          registrationEnd: DateTime.now().add(Duration(days: 3, hours: 6)),
-          tournamentStart: DateTime.now().add(Duration(days: 4)),
+          registrationEnd: now.add(Duration(days: 3, hours: 6)),
+          tournamentStart: now.add(Duration(days: 4)),
           imageUrl: 'https://wallpapers.com/images/high/free-fire-logo-armed-woman-fdsbmr41d528ty45.webp',
           tournamentId: 'FF001',
+          region: 'Global',
+          platform: 'Mobile',
+          prizePool: 2000.0,
+          tournamentType: 'Squad',
+          status: 'upcoming',
         ),
         Tournament(
           id: 'freefire_tournament_2',
@@ -141,10 +156,15 @@ class _TournamentListScreenState extends State<TournamentListScreen> {
           entryFee: 15.0,
           totalSlots: 40,
           registeredPlayers: 18,
-          registrationEnd: DateTime.now().add(Duration(hours: 12)),
-          tournamentStart: DateTime.now().add(Duration(days: 1)),
+          registrationEnd: now.add(Duration(hours: 12)),
+          tournamentStart: now.add(Duration(days: 1)),
           imageUrl: 'https://wallpapers.com/images/high/free-fire-logo-armed-woman-fdsbmr41d528ty45.webp',
           tournamentId: 'FF002',
+          region: 'India',
+          platform: 'Mobile',
+          prizePool: 600.0,
+          tournamentType: 'Duo',
+          status: 'upcoming',
         ),
       ],
 
@@ -157,10 +177,15 @@ class _TournamentListScreenState extends State<TournamentListScreen> {
           entryFee: 80.0,
           totalSlots: 40,
           registeredPlayers: 15,
-          registrationEnd: DateTime.now().add(Duration(days: 5, hours: 4)),
-          tournamentStart: DateTime.now().add(Duration(days: 6)),
+          registrationEnd: now.add(Duration(days: 5, hours: 4)),
+          tournamentStart: now.add(Duration(days: 6)),
           imageUrl: 'https://w0.peakpx.com/wallpaper/522/122/HD-wallpaper-valorant-reyna-background-game-phone.jpg',
           tournamentId: 'VAL001',
+          region: 'Global',
+          platform: 'PC',
+          prizePool: 3200.0,
+          tournamentType: '5v5',
+          status: 'upcoming',
         ),
       ],
 
@@ -170,13 +195,18 @@ class _TournamentListScreenState extends State<TournamentListScreen> {
           id: 'codm_tournament_1',
           gameName: 'COD Mobile',
           tournamentName: 'COD Mobile Championship',
-          entryFee: 40.0,
+          entryFee: 40.00,
           totalSlots: 60,
           registeredPlayers: 22,
-          registrationEnd: DateTime.now().add(Duration(days: 4, hours: 3)),
-          tournamentStart: DateTime.now().add(Duration(days: 5)),
+          registrationEnd: now.add(Duration(days: 4, hours: 3)),
+          tournamentStart: now.add(Duration(days: 5)),
           imageUrl: 'https://wallpapers.com/images/high/yellow-call-of-duty-phone-qh4ng5sccotp6hlh.webp',
           tournamentId: 'CODM001',
+          region: 'Global',
+          platform: 'Mobile',
+          prizePool: 2400.0,
+          tournamentType: 'Squad',
+          status: 'upcoming',
         ),
       ],
     ];
@@ -201,14 +231,25 @@ class _TournamentListScreenState extends State<TournamentListScreen> {
   }
 
   void _showGameIdDialog(Tournament tournament) {
+    print('🔄 === SHOWING GAME ID DIALOG ===');
+    print('🔄 Tournament: ${tournament.tournamentName}');
+
     showDialog(
       context: context,
-      builder: (context) => GameIdDialog(
-        gameName: widget.gameName,
-        onConfirm: (playerName, playerId) {
-          _navigateToPayment(tournament, playerName, playerId);
-        },
-      ),
+      barrierDismissible: false,
+      builder: (context) {
+        print('🔄 Building GameIdDialog widget...');
+        return GameIdDialog(
+          gameName: widget.gameName,
+          tournament: tournament, // Pass tournament data
+          onConfirm: (playerName, playerId) {
+            print('✅ === GAME ID DIALOG CONFIRMED ===');
+            print('✅ Player Name: $playerName');
+            print('✅ Player ID: $playerId');
+            // Razorpay will open automatically now
+          },
+        );
+      },
     );
   }
 
@@ -236,10 +277,60 @@ class _TournamentListScreenState extends State<TournamentListScreen> {
       final mockTournaments = _getMockTournaments();
 
       for (var tournament in mockTournaments) {
+        final tournamentData = {
+          'basicInfo': {
+            'tournamentId': tournament.tournamentId,
+            'tournamentName': tournament.tournamentName,
+            'gameName': tournament.gameName,
+            'gameId': tournament.gameName.toLowerCase().replaceAll(' ', ''),
+            'tournamentType': tournament.tournamentType?.toLowerCase() ?? 'solo',
+            'entryFee': tournament.entryFee,
+            'prizePool': tournament.prizePool,
+            'maxPlayers': tournament.totalSlots,
+            'registeredPlayers': tournament.registeredPlayers,
+            'status': tournament.status?.toLowerCase() ?? 'upcoming',
+            'platform': tournament.platform?.toLowerCase() ?? 'mobile',
+            'region': tournament.region?.toLowerCase() ?? 'global',
+          },
+          'schedule': {
+            'registrationStart': Timestamp.now(),
+            'registrationEnd': Timestamp.fromDate(tournament.registrationEnd!),
+            'tournamentStart': Timestamp.fromDate(tournament.tournamentStart!),
+            'estimatedDuration': 180,
+            'checkInTime': Timestamp.fromDate(tournament.tournamentStart!.subtract(Duration(minutes: 30))),
+          },
+          'rules': {
+            'maxKills': 99,
+            'allowedDevices': [tournament.platform?.toLowerCase() ?? 'mobile'],
+            'streamingRequired': false,
+            'screenshotRequired': true,
+            'specificRules': {
+              'map': tournament.gameName == 'BGMI' ? 'Erangel' : 'Default',
+              'perspective': 'TPP',
+              'teamSize': _getTeamSize(tournament.tournamentType),
+            },
+          },
+          'prizes': {
+            'distribution': [
+              {'rank': 1, 'prize': (tournament.prizePool! * 0.5), 'percentage': 50},
+              {'rank': 2, 'prize': (tournament.prizePool! * 0.3), 'percentage': 30},
+              {'rank': 3, 'prize': (tournament.prizePool! * 0.2), 'percentage': 20},
+            ],
+          },
+          'metadata': {
+            'createdBy': 'admin',
+            'createdAt': FieldValue.serverTimestamp(),
+            'updatedAt': FieldValue.serverTimestamp(),
+            'version': 1,
+            'featured': true,
+            'sponsored': false,
+          },
+        };
+
         await _firestore
             .collection('tournaments')
             .doc(tournament.id)
-            .set(tournament.toMap());
+            .set(tournamentData);
       }
 
       await _loadTournaments(); // Reload tournaments after seeding
@@ -261,6 +352,21 @@ class _TournamentListScreenState extends State<TournamentListScreen> {
       setState(() {
         _isLoading = false;
       });
+    }
+  }
+
+  int _getTeamSize(String? tournamentType) {
+    switch (tournamentType?.toLowerCase()) {
+      case 'solo':
+        return 1;
+      case 'duo':
+        return 2;
+      case 'squad':
+        return 4;
+      case '5v5':
+        return 5;
+      default:
+        return 1;
     }
   }
 

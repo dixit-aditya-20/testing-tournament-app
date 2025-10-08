@@ -40,16 +40,8 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
         password: _passwordController.text.trim(),
       );
 
-      // Save user details to Firestore - MAKE SURE THIS IS CALLED
-      await _firebaseService.saveUserProfile(
-        userId: userCredential.user!.uid,
-        name: _nameController.text.trim(),
-        email: _emailController.text.trim(),
-        phone: _phoneController.text.trim(),
-      );
 
-      // Add welcome bonus to wallet
-      await _firebaseService.addWelcomeBonus(userCredential.user!.uid);
+
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(

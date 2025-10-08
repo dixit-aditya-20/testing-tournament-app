@@ -49,7 +49,7 @@ class TournamentCard extends StatelessWidget {
                     border: Border.all(color: Colors.green),
                   ),
                   child: Text(
-                    '\$${tournament.entryFee}',
+                    '₹${tournament.entryFee}',
                     style: TextStyle(
                       fontSize: 16,
                       fontWeight: FontWeight.bold,

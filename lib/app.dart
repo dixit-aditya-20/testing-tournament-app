@@ -102,21 +102,34 @@ class AppDrawer extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Drawer(
-      child: FutureBuilder<Map<String, dynamic>?>(
-        future: _firebaseService.getUserProfile(),
+      child: FutureBuilder(
+        future: _firebaseService.getCurrentUser(),
         builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return _buildLoadingDrawer();
+          }
+
+          if (snapshot.hasError || !snapshot.hasData) {
+            return _buildErrorDrawer();
+          }
+
           final user = snapshot.data;
           return Column(
             children: [
               UserAccountsDrawerHeader(
                 accountName: Text(
-                  user?['name'] ?? 'User',
+                  user?.name ?? 'User',
                   style: TextStyle(fontWeight: FontWeight.bold),
                 ),
-                accountEmail: Text(user?['email'] ?? 'user@example.com'),
+                accountEmail: Text(user?.email ?? 'user@example.com'),
                 currentAccountPicture: CircleAvatar(
                   backgroundColor: Colors.white,
-                  child: Icon(
+                  backgroundImage: user?.profileImage?.isNotEmpty == true
+                      ? NetworkImage(user!.profileImage)
+                      : null,
+                  child: user?.profileImage?.isNotEmpty == true
+                      ? null
+                      : Icon(
                     Icons.person,
                     color: Colors.deepPurple,
                     size: 40,
@@ -130,11 +143,33 @@ class AppDrawer extends StatelessWidget {
                 leading: Icon(Icons.account_balance_wallet),
                 title: Text('Wallet Balance'),
                 trailing: Text(
-                  '₹${user?['walletBalance']?.toStringAsFixed(2) ?? '0.00'}',
+                  '₹${user?.walletBalance.toStringAsFixed(2) ?? '0.00'}',
                   style: TextStyle(
                     fontWeight: FontWeight.bold,
                     color: Colors.green,
                   ),
+                ),
+              ),
+              ListTile(
+                leading: Icon(Icons.emoji_events),
+                title: Text('Total Winnings'),
+                trailing: Text(
+                  '₹${user?.totalWinnings.toStringAsFixed(2) ?? '0.00'}',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    color: Colors.orange,
+                  ),
+                ),
+              ),
+              ListTile(
+                leading: Icon(Icons.leaderboard),
+                title: Text('Rank'),
+                trailing: Chip(
+                  label: Text(
+                    user?.rank ?? 'Beginner',
+                    style: TextStyle(color: Colors.white, fontSize: 12),
+                  ),
+                  backgroundColor: Colors.deepPurple,
                 ),
               ),
               Divider(),
@@ -168,20 +203,102 @@ class AppDrawer extends StatelessWidget {
                 title: 'Notifications',
                 onTap: () => _navigateToScreen(context, 4),
               ),
+              Divider(),
+              _buildDrawerItem(
+                context,
+                icon: Icons.person,
+                title: 'Profile',
+                onTap: () {
+                  // TODO: Navigate to profile screen
+                  Navigator.pop(context);
+                },
+              ),
+              _buildDrawerItem(
+                context,
+                icon: Icons.settings,
+                title: 'Settings',
+                onTap: () {
+                  // TODO: Navigate to settings screen
+                  Navigator.pop(context);
+                },
+              ),
               Spacer(),
               Divider(),
               ListTile(
                 leading: Icon(Icons.logout, color: Colors.red),
                 title: Text('Sign Out', style: TextStyle(color: Colors.red)),
                 onTap: () {
-                  FirebaseAuth.instance.signOut();
-                  Navigator.pop(context);
+                  _showLogoutConfirmation(context);
                 },
               ),
+              SizedBox(height: 16),
             ],
           );
         },
       ),
+    );
+  }
+
+  Widget _buildLoadingDrawer() {
+    return Column(
+      children: [
+        UserAccountsDrawerHeader(
+          accountName: Text('Loading...'),
+          accountEmail: Text('Loading...'),
+          currentAccountPicture: CircleAvatar(
+            backgroundColor: Colors.white,
+            child: CircularProgressIndicator(),
+          ),
+          decoration: BoxDecoration(
+            color: Colors.deepPurple,
+          ),
+        ),
+        Expanded(
+          child: Center(
+            child: CircularProgressIndicator(),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildErrorDrawer() {
+    return Column(
+      children: [
+        UserAccountsDrawerHeader(
+          accountName: Text('Error'),
+          accountEmail: Text('Failed to load user data'),
+          currentAccountPicture: CircleAvatar(
+            backgroundColor: Colors.white,
+            child: Icon(Icons.error, color: Colors.red),
+          ),
+          decoration: BoxDecoration(
+            color: Colors.deepPurple,
+          ),
+        ),
+        Expanded(
+          child: Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.error_outline, size: 60, color: Colors.grey),
+                SizedBox(height: 16),
+                Text(
+                  'Failed to load user data',
+                  style: TextStyle(color: Colors.grey),
+                ),
+                SizedBox(height: 16),
+                ElevatedButton(
+                  onPressed: () {
+                    // The drawer will automatically rebuild when popped and reopened
+                  },
+                  child: Text('Retry'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
     );
   }
 
@@ -199,10 +316,47 @@ class AppDrawer extends StatelessWidget {
 
   void _navigateToScreen(BuildContext context, int index) {
     Navigator.pop(context);
-    if (context.findAncestorStateOfType<_MainAppState>() != null) {
-      context.findAncestorStateOfType<_MainAppState>()!.setState(() {
-        context.findAncestorStateOfType<_MainAppState>()!._currentIndex = index;
+    final mainAppState = context.findAncestorStateOfType<_MainAppState>();
+    if (mainAppState != null) {
+      mainAppState.setState(() {
+        mainAppState._currentIndex = index;
       });
+    }
+  }
+
+  void _showLogoutConfirmation(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Sign Out'),
+        content: Text('Are you sure you want to sign out?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context); // Close dialog
+              Navigator.pop(context); // Close drawer
+              _signOut();
+            },
+            child: Text(
+              'Sign Out',
+              style: TextStyle(color: Colors.red),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _signOut() async {
+    try {
+      await FirebaseAuth.instance.signOut();
+      // User will be automatically redirected to login screen due to auth state changes
+    } catch (e) {
+      print('Error signing out: $e');
     }
   }
 }

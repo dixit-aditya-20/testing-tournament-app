@@ -27,12 +27,14 @@ class _PaymentScreenState extends State<PaymentScreen> {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   late Razorpay _razorpay;
   bool _isProcessing = false;
+  double _walletBalance = 0.0;
 
   @override
   void initState() {
     super.initState();
     print('🎮 PaymentScreen initialized for: ${widget.tournament.tournamentName}');
     _initializeRazorpay();
+    _loadWalletBalance();
   }
 
   void _initializeRazorpay() {
@@ -41,6 +43,20 @@ class _PaymentScreenState extends State<PaymentScreen> {
     _razorpay.on(Razorpay.EVENT_PAYMENT_ERROR, _handlePaymentError);
     _razorpay.on(Razorpay.EVENT_EXTERNAL_WALLET, _handleExternalWallet);
     print('✅ Razorpay initialized successfully');
+  }
+
+  Future<void> _loadWalletBalance() async {
+    try {
+      final currentUser = await _firebaseService.getCurrentUser();
+      if (currentUser != null) {
+        setState(() {
+          _walletBalance = currentUser.walletBalance;
+        });
+        print('💰 Wallet balance loaded: $_walletBalance');
+      }
+    } catch (e) {
+      print('❌ Error loading wallet balance: $e');
+    }
   }
 
   void _openRazorpayCheckout() {
@@ -53,8 +69,9 @@ class _PaymentScreenState extends State<PaymentScreen> {
 
     try {
       var options = {
-        'key': 'rzp_test_1DP5mmOlF5G5ag',
+        'key': 'rzp_test_RQDq0jH1TAHe1P',
         'amount': (widget.tournament.entryFee * 100).toInt(),
+        'currency': 'INR',
         'name': 'Game Tournaments',
         'description': 'Entry fee for ${widget.tournament.tournamentName}',
         'prefill': {
@@ -87,15 +104,12 @@ class _PaymentScreenState extends State<PaymentScreen> {
     print('✅ Payment Success: ${response.paymentId}');
 
     try {
-      // Use the CORRECT method name: saveTournamentRegistration
-      final success = await _firebaseService.saveTournamentRegistration(
-        tournamentId: widget.tournament.id,
-        tournamentName: widget.tournament.tournamentName,
-        gameName: widget.gameName,
+      final success = await _firebaseService.registerForTournament(
+        tournament: widget.tournament,
         playerName: widget.playerName ?? "Unknown Player",
         playerId: widget.playerId ?? "UnknownID",
-        entryFee: widget.tournament.entryFee,
         paymentId: response.paymentId!,
+        paymentMethod: 'razorpay',
       );
 
       if (success) {
@@ -109,7 +123,8 @@ class _PaymentScreenState extends State<PaymentScreen> {
           ),
         );
 
-        Navigator.pop(context);
+        // Navigate back to tournament list or home screen
+        Navigator.popUntil(context, (route) => route.isFirst);
 
       } else {
         throw Exception('Failed to save registration to Firebase');
@@ -162,27 +177,22 @@ class _PaymentScreenState extends State<PaymentScreen> {
     });
 
     try {
-      final userProfile = await _firebaseService.getUserProfile();
-      final walletBalance = userProfile?['walletBalance'] ?? 0.0;
-
-      if (walletBalance >= widget.tournament.entryFee) {
+      if (_walletBalance >= widget.tournament.entryFee) {
         final paymentId = 'WALLET_${DateTime.now().millisecondsSinceEpoch}';
 
-        // Use the CORRECT method name: saveTournamentRegistration
-        final success = await _firebaseService.saveTournamentRegistration(
-          tournamentId: widget.tournament.id,
-          tournamentName: widget.tournament.tournamentName,
-          gameName: widget.gameName,
+        final success = await _firebaseService.registerForTournament(
+          tournament: widget.tournament,
           playerName: widget.playerName ?? "Unknown Player",
           playerId: widget.playerId ?? "UnknownID",
-          entryFee: widget.tournament.entryFee,
           paymentId: paymentId,
+          paymentMethod: 'wallet',
         );
 
         if (success) {
-          await _firebaseService.deductFromWallet(widget.tournament.entryFee);
-
           print('🎉 Wallet payment successful!');
+
+          // Refresh wallet balance after payment
+          await _loadWalletBalance();
 
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -191,7 +201,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
             ),
           );
 
-          Navigator.pop(context);
+          Navigator.popUntil(context, (route) => route.isFirst);
         } else {
           throw Exception('Failed to save registration');
         }
@@ -202,6 +212,9 @@ class _PaymentScreenState extends State<PaymentScreen> {
             backgroundColor: Colors.orange,
           ),
         );
+        setState(() {
+          _isProcessing = false;
+        });
       }
     } catch (e) {
       print('❌ Wallet payment error: $e');
@@ -211,7 +224,6 @@ class _PaymentScreenState extends State<PaymentScreen> {
           backgroundColor: Colors.red,
         ),
       );
-    } finally {
       setState(() {
         _isProcessing = false;
       });
@@ -267,6 +279,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
                       _buildDetailRow('Player Name', widget.playerName!),
                     if (widget.playerId != null)
                       _buildDetailRow('Game ID', widget.playerId!),
+                    _buildDetailRow('Wallet Balance', '₹${_walletBalance.toStringAsFixed(2)}'),
                   ],
                 ),
               ),
@@ -312,14 +325,27 @@ class _PaymentScreenState extends State<PaymentScreen> {
             ),
             SizedBox(height: 16),
 
-            // Wallet Payment
+            // Wallet Payment with balance
             Card(
               child: ListTile(
-                leading: Icon(Icons.account_balance_wallet, color: Colors.blue),
+                leading: Icon(
+                    Icons.account_balance_wallet,
+                    color: _walletBalance >= widget.tournament.entryFee ? Colors.blue : Colors.grey
+                ),
                 title: Text('Pay with Wallet'),
-                subtitle: Text('Use your wallet balance'),
+                subtitle: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Balance: ₹${_walletBalance.toStringAsFixed(2)}'),
+                    if (_walletBalance < widget.tournament.entryFee)
+                      Text(
+                        'Insufficient balance',
+                        style: TextStyle(color: Colors.red, fontSize: 12),
+                      ),
+                  ],
+                ),
                 trailing: Icon(Icons.arrow_forward_ios, size: 16),
-                onTap: _processWalletPayment,
+                onTap: _walletBalance >= widget.tournament.entryFee ? _processWalletPayment : null,
               ),
             ),
             SizedBox(height: 10),
