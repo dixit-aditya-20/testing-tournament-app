@@ -3,7 +3,6 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import '../modles/tournament_model.dart';
 import '../services/firebase_service.dart';
 import '../widgets/tournament_card.dart';
-import 'payment_screen.dart';
 import '../widgets/game_id_dialog.dart';
 
 class TournamentListScreen extends StatefulWidget {
@@ -26,206 +25,128 @@ class _TournamentListScreenState extends State<TournamentListScreen> {
 
   List<Tournament> _tournaments = [];
   bool _isLoading = true;
-  bool _hasDataInFirebase = false;
+  String _errorMessage = '';
 
   @override
   void initState() {
     super.initState();
     _loadTournaments();
+
+    // Listen for real-time updates to tournaments
+    _setupTournamentListener();
+  }
+
+  // Real-time updates for credentials
+  void _setupTournamentListener() {
+    _firestore
+        .collection('tournaments')
+        .where('game_name', isEqualTo: widget.gameName)
+        .where('status', whereIn: ['upcoming', 'live'])
+        .snapshots()
+        .listen((snapshot) {
+      if (mounted) {
+        _processTournamentSnapshot(snapshot);
+      }
+    });
   }
 
   Future<void> _loadTournaments() async {
     try {
       print('🔄 Loading tournaments for: ${widget.gameName}');
 
-      // Load directly from Firestore with proper query
       final snapshot = await _firestore
           .collection('tournaments')
-          .where('basicInfo.gameName', isEqualTo: widget.gameName)
-          .where('basicInfo.status', whereIn: ['upcoming', 'live'])
+          .where('game_name', isEqualTo: widget.gameName)
+          .where('status', whereIn: ['upcoming', 'live'])
+          .orderBy('tournament_start')
           .get();
 
-      print('📊 Firestore returned ${snapshot.docs.length} tournaments for ${widget.gameName}');
+      print('📊 Firestore returned ${snapshot.docs.length} documents');
+      _processTournamentSnapshot(snapshot);
 
-      if (snapshot.docs.isNotEmpty) {
-        final List<Tournament> loadedTournaments = [];
-
-        for (var doc in snapshot.docs) {
-          try {
-            final tournament = Tournament.fromFirestore(doc);
-            loadedTournaments.add(tournament);
-          } catch (e) {
-            print('❌ Error parsing tournament: $e');
-          }
-        }
-
-        setState(() {
-          _tournaments = loadedTournaments;
-          _hasDataInFirebase = true;
-          _isLoading = false;
-        });
-
-        print('✅ Successfully loaded ${_tournaments.length} tournaments');
-      } else {
-        print('⚠️ No tournaments found in Firestore for ${widget.gameName}');
-        // Use mock data as fallback
-        final mockTournaments = _getMockTournaments();
-        setState(() {
-          _tournaments = mockTournaments;
-          _hasDataInFirebase = false;
-          _isLoading = false;
-        });
-      }
     } catch (e) {
       print('❌ Error loading tournaments: $e');
-      // Fallback to mock data
-      final mockTournaments = _getMockTournaments();
       setState(() {
-        _tournaments = mockTournaments;
-        _hasDataInFirebase = false;
+        _tournaments = [];
         _isLoading = false;
+        _errorMessage = 'Error loading tournaments: $e';
       });
     }
   }
 
-  List<Tournament> _getMockTournaments() {
-    final now = DateTime.now();
+  void _processTournamentSnapshot(QuerySnapshot snapshot) {
+    if (snapshot.docs.isNotEmpty) {
+      final List<Tournament> loadedTournaments = [];
 
-    return [
-      // BGMI Tournaments
-      if (widget.gameName == 'BGMI') ...[
-        Tournament(
-          id: 'bgmi_tournament_1',
-          gameName: 'BGMI',
-          tournamentName: 'BGMI Championship Season 1',
-          entryFee: 50.0,
-          totalSlots: 100,
-          registeredPlayers: 45,
-          registrationEnd: now.add(Duration(days: 2, hours: 5)),
-          tournamentStart: now.add(Duration(days: 3)),
-          imageUrl: 'https://w0.peakpx.com/wallpaper/742/631/HD-wallpaper-bgmi-trending-pubg-bgmi-iammsa-pubg.jpg',
-          tournamentId: 'BGMI001',
-          region: 'Global',
-          platform: 'Mobile',
-          prizePool: 5000.0,
-          tournamentType: 'Solo',
-          status: 'upcoming',
-        ),
-        Tournament(
-          id: 'bgmi_tournament_2',
-          gameName: 'BGMI',
-          tournamentName: 'BGMI Weekly Showdown',
-          entryFee: 30.0,
-          totalSlots: 50,
-          registeredPlayers: 32,
-          registrationEnd: now.add(Duration(days: 1, hours: 3)),
-          tournamentStart: now.add(Duration(days: 2)),
-          imageUrl: 'https://w0.peakpx.com/wallpaper/742/631/HD-wallpaper-bgmi-trending-pubg-bgmi-iammsa-pubg.jpg',
-          tournamentId: 'BGMI002',
-          region: 'India',
-          platform: 'Mobile',
-          prizePool: 1500.0,
-          tournamentType: 'Squad',
-          status: 'upcoming',
-        ),
-      ],
+      for (var doc in snapshot.docs) {
+        try {
+          final data = doc.data() as Map<String, dynamic>;
+          print('🔍 Document ID: ${doc.id}');
 
-      // Free Fire Tournaments
-      if (widget.gameName == 'Free Fire') ...[
-        Tournament(
-          id: 'freefire_tournament_1',
-          gameName: 'Free Fire',
-          tournamentName: 'Free Fire Masters',
-          entryFee: 25.0,
-          totalSlots: 80,
-          registeredPlayers: 28,
-          registrationEnd: now.add(Duration(days: 3, hours: 6)),
-          tournamentStart: now.add(Duration(days: 4)),
-          imageUrl: 'https://wallpapers.com/images/high/free-fire-logo-armed-woman-fdsbmr41d528ty45.webp',
-          tournamentId: 'FF001',
-          region: 'Global',
-          platform: 'Mobile',
-          prizePool: 2000.0,
-          tournamentType: 'Squad',
-          status: 'upcoming',
-        ),
-        Tournament(
-          id: 'freefire_tournament_2',
-          gameName: 'Free Fire',
-          tournamentName: 'Free Fire Clash',
-          entryFee: 15.0,
-          totalSlots: 40,
-          registeredPlayers: 18,
-          registrationEnd: now.add(Duration(hours: 12)),
-          tournamentStart: now.add(Duration(days: 1)),
-          imageUrl: 'https://wallpapers.com/images/high/free-fire-logo-armed-woman-fdsbmr41d528ty45.webp',
-          tournamentId: 'FF002',
-          region: 'India',
-          platform: 'Mobile',
-          prizePool: 600.0,
-          tournamentType: 'Duo',
-          status: 'upcoming',
-        ),
-      ],
+          // Debug credentials
+          if (data['roomId'] != null) {
+            print('🔐 Tournament ${data['tournament_name']} has credentials: ${data['roomId']}');
+          }
 
-      // Valorant Tournaments
-      if (widget.gameName == 'Valorant') ...[
-        Tournament(
-          id: 'valorant_tournament_1',
-          gameName: 'Valorant',
-          tournamentName: 'Valorant Pro Series',
-          entryFee: 80.0,
-          totalSlots: 40,
-          registeredPlayers: 15,
-          registrationEnd: now.add(Duration(days: 5, hours: 4)),
-          tournamentStart: now.add(Duration(days: 6)),
-          imageUrl: 'https://w0.peakpx.com/wallpaper/522/122/HD-wallpaper-valorant-reyna-background-game-phone.jpg',
-          tournamentId: 'VAL001',
-          region: 'Global',
-          platform: 'PC',
-          prizePool: 3200.0,
-          tournamentType: '5v5',
-          status: 'upcoming',
-        ),
-      ],
+          // Check for required fields
+          if (data['tournament_name'] == null) {
+            print('⚠️ Missing tournament_name in document ${doc.id}');
+            continue;
+          }
 
-      // COD Mobile Tournaments
-      if (widget.gameName == 'COD Mobile') ...[
-        Tournament(
-          id: 'codm_tournament_1',
-          gameName: 'COD Mobile',
-          tournamentName: 'COD Mobile Championship',
-          entryFee: 40.00,
-          totalSlots: 60,
-          registeredPlayers: 22,
-          registrationEnd: now.add(Duration(days: 4, hours: 3)),
-          tournamentStart: now.add(Duration(days: 5)),
-          imageUrl: 'https://wallpapers.com/images/high/yellow-call-of-duty-phone-qh4ng5sccotp6hlh.webp',
-          tournamentId: 'CODM001',
-          region: 'Global',
-          platform: 'Mobile',
-          prizePool: 2400.0,
-          tournamentType: 'Squad',
-          status: 'upcoming',
-        ),
-      ],
-    ];
+          if (data['game_name'] == null) {
+            print('⚠️ Missing game_name in document ${doc.id}');
+            continue;
+          }
+
+          final tournament = Tournament.fromMap(data, doc.id);
+          loadedTournaments.add(tournament);
+          print('✅ Successfully created tournament: ${tournament.tournamentName}');
+          print('🔐 Has credentials: ${tournament.hasCredentials}');
+          print('🔐 Should show credentials: ${tournament.shouldShowCredentials}');
+
+        } catch (e) {
+          print('❌ Error parsing tournament ${doc.id}: $e');
+          print('📋 Problematic data: ${doc.data()}');
+        }
+      }
+
+      setState(() {
+        _tournaments = loadedTournaments;
+        _isLoading = false;
+        _errorMessage = '';
+      });
+
+      print('🎉 Successfully loaded ${_tournaments.length} tournaments');
+      print('🔐 Tournaments with credentials: ${_tournaments.where((t) => t.hasCredentials).length}');
+      print('🔐 Credentials available: ${_tournaments.where((t) => t.shouldShowCredentials).length}');
+
+    } else {
+      print('⚠️ No tournaments found in Firestore for ${widget.gameName}');
+      setState(() {
+        _tournaments = [];
+        _isLoading = false;
+        _errorMessage = 'No tournaments found for ${widget.gameName}';
+      });
+    }
   }
 
   void _handleJoinTournament(Tournament tournament) async {
     try {
-      final hasRegistered = await _firebaseService.hasUserRegisteredForTournament(tournament.id);
+      final hasRegistered = await _firebaseService.isUserRegisteredForTournament(tournament.id);
 
       if (hasRegistered) {
-        // User has registered before, go directly to payment
-        _navigateToPayment(tournament, null, null);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('You are already registered for this tournament'),
+            backgroundColor: Colors.orange,
+          ),
+        );
       } else {
-        // First time registration, show game ID dialog
         _showGameIdDialog(tournament);
       }
     } catch (e) {
-      print('Error checking registration: $e');
-      // If there's an error with Firebase, show the dialog anyway
+      print('❌ Error checking registration: $e');
       _showGameIdDialog(tournament);
     }
   }
@@ -241,133 +162,254 @@ class _TournamentListScreenState extends State<TournamentListScreen> {
         print('🔄 Building GameIdDialog widget...');
         return GameIdDialog(
           gameName: widget.gameName,
-          tournament: tournament, // Pass tournament data
+          tournament: tournament,
           onConfirm: (playerName, playerId) {
             print('✅ === GAME ID DIALOG CONFIRMED ===');
             print('✅ Player Name: $playerName');
             print('✅ Player ID: $playerId');
-            // Razorpay will open automatically now
+
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Registration completed successfully!'),
+                backgroundColor: Colors.green,
+                duration: Duration(seconds: 3),
+              ),
+            );
+
+            // Refresh the tournament list to show updated registration status
+            _loadTournaments();
           },
         );
       },
     );
   }
 
-  void _navigateToPayment(Tournament tournament, String? playerName, String? playerId) {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => PaymentScreen(
-          tournament: tournament,
-          playerName: playerName,
-          playerId: playerId,
-          gameName: widget.gameName,
-        ),
-      ),
+  // Handle credentials tap
+  void _handleCredentialsTap(Tournament tournament) {
+    if (!tournament.hasCredentials) return;
+
+    showDialog(
+      context: context,
+      builder: (context) => _buildCredentialsDialog(tournament),
     );
   }
 
-  Future<void> _seedDataToFirebase() async {
-    setState(() {
-      _isLoading = true;
-    });
+  Widget _buildCredentialsDialog(Tournament tournament) {
+    final shouldShowCredentials = tournament.shouldShowCredentials;
 
-    try {
-      // Add sample tournaments to Firestore
-      final mockTournaments = _getMockTournaments();
-
-      for (var tournament in mockTournaments) {
-        final tournamentData = {
-          'basicInfo': {
-            'tournamentId': tournament.tournamentId,
-            'tournamentName': tournament.tournamentName,
-            'gameName': tournament.gameName,
-            'gameId': tournament.gameName.toLowerCase().replaceAll(' ', ''),
-            'tournamentType': tournament.tournamentType?.toLowerCase() ?? 'solo',
-            'entryFee': tournament.entryFee,
-            'prizePool': tournament.prizePool,
-            'maxPlayers': tournament.totalSlots,
-            'registeredPlayers': tournament.registeredPlayers,
-            'status': tournament.status?.toLowerCase() ?? 'upcoming',
-            'platform': tournament.platform?.toLowerCase() ?? 'mobile',
-            'region': tournament.region?.toLowerCase() ?? 'global',
-          },
-          'schedule': {
-            'registrationStart': Timestamp.now(),
-            'registrationEnd': Timestamp.fromDate(tournament.registrationEnd!),
-            'tournamentStart': Timestamp.fromDate(tournament.tournamentStart!),
-            'estimatedDuration': 180,
-            'checkInTime': Timestamp.fromDate(tournament.tournamentStart!.subtract(Duration(minutes: 30))),
-          },
-          'rules': {
-            'maxKills': 99,
-            'allowedDevices': [tournament.platform?.toLowerCase() ?? 'mobile'],
-            'streamingRequired': false,
-            'screenshotRequired': true,
-            'specificRules': {
-              'map': tournament.gameName == 'BGMI' ? 'Erangel' : 'Default',
-              'perspective': 'TPP',
-              'teamSize': _getTeamSize(tournament.tournamentType),
-            },
-          },
-          'prizes': {
-            'distribution': [
-              {'rank': 1, 'prize': (tournament.prizePool! * 0.5), 'percentage': 50},
-              {'rank': 2, 'prize': (tournament.prizePool! * 0.3), 'percentage': 30},
-              {'rank': 3, 'prize': (tournament.prizePool! * 0.2), 'percentage': 20},
-            ],
-          },
-          'metadata': {
-            'createdBy': 'admin',
-            'createdAt': FieldValue.serverTimestamp(),
-            'updatedAt': FieldValue.serverTimestamp(),
-            'version': 1,
-            'featured': true,
-            'sponsored': false,
-          },
-        };
-
-        await _firestore
-            .collection('tournaments')
-            .doc(tournament.id)
-            .set(tournamentData);
-      }
-
-      await _loadTournaments(); // Reload tournaments after seeding
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Sample tournaments added to Firebase!'),
-          backgroundColor: Colors.green,
-        ),
-      );
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Error seeding data: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
-    } finally {
-      setState(() {
-        _isLoading = false;
-      });
+    if (!shouldShowCredentials) {
+      return _buildComingSoonDialog(tournament);
     }
+
+    return AlertDialog(
+      title: Row(
+        children: [
+          Icon(Icons.lock_open, color: Colors.indigo),
+          SizedBox(width: 8),
+          Text('Match Credentials'),
+        ],
+      ),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              tournament.tournamentName,
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                color: Colors.deepPurple,
+              ),
+            ),
+            SizedBox(height: 16),
+            _buildCredentialDetailItem('Room ID', tournament.roomId ?? 'Not available'),
+            SizedBox(height: 12),
+            _buildCredentialDetailItem('Room Password', tournament.roomPassword ?? 'Not available'),
+            SizedBox(height: 12),
+            if (tournament.credentialsMatchTime != null)
+              _buildCredentialDetailItem(
+                  'Match Time',
+                  _formatMatchTime(tournament.credentialsMatchTime!)
+              ),
+            SizedBox(height: 16),
+            Container(
+              padding: EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.orange[50],
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.orange),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Important:',
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      color: Colors.orange[800],
+                    ),
+                  ),
+                  SizedBox(height: 4),
+                  Text(
+                    '• Please join the room 15 minutes before match time\n• Keep your credentials secure\n• Do not share with others',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.orange[800],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: Text('CLOSE'),
+        ),
+        ElevatedButton(
+          onPressed: () {
+            _copyCredentialsToClipboard(tournament);
+            Navigator.pop(context);
+          },
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.indigo,
+          ),
+          child: Text('COPY DETAILS'),
+        ),
+      ],
+    );
   }
 
-  int _getTeamSize(String? tournamentType) {
-    switch (tournamentType?.toLowerCase()) {
-      case 'solo':
-        return 1;
-      case 'duo':
-        return 2;
-      case 'squad':
-        return 4;
-      case '5v5':
-        return 5;
-      default:
-        return 1;
-    }
+  Widget _buildComingSoonDialog(Tournament tournament) {
+    return AlertDialog(
+      title: Row(
+        children: [
+          Icon(Icons.lock_clock, color: Colors.orange),
+          SizedBox(width: 8),
+          Text('Credentials Coming Soon'),
+        ],
+      ),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Match room credentials will be available:',
+            style: TextStyle(fontSize: 14),
+          ),
+          SizedBox(height: 12),
+          Container(
+            padding: EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.blue[50],
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.blue),
+            ),
+            child: Column(
+              children: [
+                Text(
+                  '30 minutes before match starts',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    color: Colors.blue[800],
+                  ),
+                ),
+                SizedBox(height: 8),
+                if (tournament.credentialsAvailabilityTime.isNotEmpty)
+                  Text(
+                    'Available at: ${tournament.credentialsAvailabilityTime}',
+                    style: TextStyle(
+                      color: Colors.blue[800],
+                    ),
+                  ),
+                if (tournament.credentialsMatchTime != null)
+                  Text(
+                    'Match starts at: ${_formatMatchTime(tournament.credentialsMatchTime!)}',
+                    style: TextStyle(
+                      color: Colors.blue[800],
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          SizedBox(height: 16),
+          Text(
+            'Please check back later to get your room ID and password.',
+            style: TextStyle(
+              fontSize: 12,
+              color: Colors.grey[600],
+            ),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: Text('OK'),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildCredentialDetailItem(String label, String value) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w500,
+            color: Colors.grey[700],
+          ),
+        ),
+        SizedBox(height: 4),
+        Container(
+          width: double.infinity,
+          padding: EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: Colors.grey[50],
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: Colors.grey),
+          ),
+          child: Text(
+            value,
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+              color: Colors.indigo[800],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  String _formatMatchTime(Timestamp matchTime) {
+    final date = matchTime.toDate();
+    return '${date.day}/${date.month}/${date.year} ${date.hour}:${date.minute.toString().padLeft(2, '0')}';
+  }
+
+  void _copyCredentialsToClipboard(Tournament tournament) {
+    final credentials = '''
+Tournament: ${tournament.tournamentName}
+Room ID: ${tournament.roomId}
+Password: ${tournament.roomPassword}
+Match Time: ${tournament.credentialsMatchTime != null ? _formatMatchTime(tournament.credentialsMatchTime!) : 'Not specified'}
+''';
+
+    // You can use clipboard package here
+    // Clipboard.setData(ClipboardData(text: credentials));
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Credentials copied to clipboard!'),
+        backgroundColor: Colors.green,
+      ),
+    );
   }
 
   @override
@@ -384,16 +426,15 @@ class _TournamentListScreenState extends State<TournamentListScreen> {
         backgroundColor: Colors.deepPurple,
         centerTitle: true,
         actions: [
-          if (!_hasDataInFirebase && !_isLoading)
-            IconButton(
-              icon: Icon(Icons.cloud_upload),
-              onPressed: _seedDataToFirebase,
-              tooltip: 'Add sample data to Firebase',
-            ),
           IconButton(
             icon: Icon(Icons.refresh),
             onPressed: _loadTournaments,
             tooltip: 'Refresh tournaments',
+          ),
+          IconButton(
+            icon: Icon(Icons.bug_report),
+            onPressed: _showDebugInfo,
+            tooltip: 'Debug Info',
           ),
         ],
       ),
@@ -405,13 +446,6 @@ class _TournamentListScreenState extends State<TournamentListScreen> {
             CircularProgressIndicator(),
             SizedBox(height: 16),
             Text('Loading Tournaments...'),
-            if (!_hasDataInFirebase) ...[
-              SizedBox(height: 8),
-              Text(
-                'Checking Firebase...',
-                style: TextStyle(fontSize: 12, color: Colors.grey),
-              ),
-            ],
           ],
         ),
       )
@@ -436,25 +470,21 @@ class _TournamentListScreenState extends State<TournamentListScreen> {
             ),
             SizedBox(height: 10),
             Text(
-              _hasDataInFirebase
-                  ? 'No tournaments found for ${widget.gameName}'
-                  : 'No tournaments found in Firebase',
+              _errorMessage.isNotEmpty
+                  ? _errorMessage
+                  : 'No tournaments found for ${widget.gameName}',
               style: TextStyle(
                 fontSize: 16,
                 color: Colors.grey[500],
               ),
+              textAlign: TextAlign.center,
             ),
             SizedBox(height: 20),
             ElevatedButton(
-              onPressed: _seedDataToFirebase,
+              onPressed: _loadTournaments,
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.deepPurple,
               ),
-              child: Text('Add Sample Tournaments to Firebase'),
-            ),
-            SizedBox(height: 10),
-            TextButton(
-              onPressed: _loadTournaments,
               child: Text('Refresh'),
             ),
           ],
@@ -462,29 +492,6 @@ class _TournamentListScreenState extends State<TournamentListScreen> {
       )
           : Column(
         children: [
-          // Data source indicator
-          if (!_hasDataInFirebase)
-            Container(
-              width: double.infinity,
-              padding: EdgeInsets.all(8),
-              color: Colors.orange[50],
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.info, size: 16, color: Colors.orange),
-                  SizedBox(width: 8),
-                  Text(
-                    'Showing sample data - Add tournaments via Admin Panel',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: Colors.orange[800],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-
-          // Tournaments count
           Padding(
             padding: EdgeInsets.all(16),
             child: Row(
@@ -518,20 +525,27 @@ class _TournamentListScreenState extends State<TournamentListScreen> {
                         color: Colors.grey[600],
                       ),
                     ),
+                    // Show credentials count
+                    if (_tournaments.any((t) => t.hasCredentials))
+                      Text(
+                        '${_tournaments.where((t) => t.hasCredentials).length} with credentials',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.green[600],
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
                   ],
                 ),
                 Spacer(),
-                if (_hasDataInFirebase)
-                  Chip(
-                    label: Text('LIVE'),
-                    backgroundColor: Colors.green,
-                    labelStyle: TextStyle(color: Colors.white),
-                  ),
+                Chip(
+                  label: Text('LIVE'),
+                  backgroundColor: Colors.green,
+                  labelStyle: TextStyle(color: Colors.white),
+                ),
               ],
             ),
           ),
-
-          // Tournaments list
           Expanded(
             child: RefreshIndicator(
               onRefresh: _loadTournaments,
@@ -542,10 +556,53 @@ class _TournamentListScreenState extends State<TournamentListScreen> {
                   return TournamentCard(
                     tournament: tournament,
                     onJoinPressed: () => _handleJoinTournament(tournament),
+                    onCredentialsTap: () => _handleCredentialsTap(tournament),
                   );
                 },
               ),
             ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showDebugInfo() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Debug Information'),
+        content: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Game: ${widget.gameName}'),
+              Text('Tournaments loaded: ${_tournaments.length}'),
+              Text('With credentials: ${_tournaments.where((t) => t.hasCredentials).length}'),
+              Text('Credentials available: ${_tournaments.where((t) => t.shouldShowCredentials).length}'),
+              Text('Error: $_errorMessage'),
+              SizedBox(height: 16),
+              if (_tournaments.isNotEmpty) ...[
+                Text('Sample Tournament:'),
+                Text('- Name: ${_tournaments.first.tournamentName}'),
+                Text('- ID: ${_tournaments.first.id}'),
+                Text('- Status: ${_tournaments.first.status}'),
+                Text('- Entry Fee: ₹${_tournaments.first.entryFee}'),
+                Text('- Has Credentials: ${_tournaments.first.hasCredentials}'),
+                Text('- Should Show Credentials: ${_tournaments.first.shouldShowCredentials}'),
+                if (_tournaments.first.hasCredentials) ...[
+                  Text('- Room ID: ${_tournaments.first.roomId}'),
+                  Text('- Room Password: ${_tournaments.first.roomPassword}'),
+                  Text('- Available at: ${_tournaments.first.credentialsAvailabilityTime}'),
+                ],
+              ],
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text('CLOSE'),
           ),
         ],
       ),

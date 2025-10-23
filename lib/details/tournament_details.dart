@@ -2,6 +2,7 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+
 import '../modles/tournament_model.dart';
 
 class TournamentDetailsScreen extends StatefulWidget {
@@ -285,7 +286,7 @@ class _TournamentDetailsScreenState extends State<TournamentDetailsScreen> {
                 children: [
                   Expanded(
                     child: ElevatedButton.icon(
-                      onPressed: () => _copyToClipboard(_matchCredentials!['roomId']),
+                      onPressed: () => _copyToClipboard(_matchCredentials!['roomId']?.toString() ?? ''),
                       icon: Icon(Icons.content_copy),
                       label: Text('Copy Room ID'),
                       style: ElevatedButton.styleFrom(
@@ -297,7 +298,7 @@ class _TournamentDetailsScreenState extends State<TournamentDetailsScreen> {
                   SizedBox(width: 8),
                   Expanded(
                     child: ElevatedButton.icon(
-                      onPressed: () => _copyToClipboard(_matchCredentials!['roomPassword']),
+                      onPressed: () => _copyToClipboard(_matchCredentials!['roomPassword']?.toString() ?? ''),
                       icon: Icon(Icons.content_copy),
                       label: Text('Copy Password'),
                       style: ElevatedButton.styleFrom(
@@ -379,8 +380,8 @@ class _TournamentDetailsScreenState extends State<TournamentDetailsScreen> {
             _buildInfoRow('Total Slots', '${widget.tournament.totalSlots}'),
             _buildInfoRow('Registered Players', '${widget.tournament.registeredPlayers}'),
             _buildInfoRow('Slots Left', '${widget.tournament.totalSlots - widget.tournament.registeredPlayers}'),
-            _buildInfoRow('Registration Ends', _formatDate(widget.tournament.registrationEnd)),
-            _buildInfoRow('Tournament Starts', _formatDate(widget.tournament.tournamentStart)),
+            _buildInfoRow('Registration Ends', _formatDate(widget.tournament.registrationEnd.toDate())), // Fixed: .toDate()
+            _buildInfoRow('Tournament Starts', _formatDate(widget.tournament.tournamentStart.toDate())), // Fixed: .toDate()
           ],
         ),
       ),
@@ -425,7 +426,8 @@ class _TournamentDetailsScreenState extends State<TournamentDetailsScreen> {
                 stream: Stream.periodic(Duration(seconds: 1), (i) => DateTime.now()),
                 builder: (context, snapshot) {
                   final now = DateTime.now();
-                  final difference = widget.tournament.tournamentStart.difference(now);
+                  final tournamentStart = widget.tournament.tournamentStart.toDate(); // Fixed: .toDate()
+                  final difference = tournamentStart.difference(now);
 
                   if (difference.isNegative) {
                     return Column(
@@ -553,6 +555,8 @@ class _TournamentDetailsScreenState extends State<TournamentDetailsScreen> {
     if (timestamp is Timestamp) {
       final date = timestamp.toDate();
       return '${date.hour}:${date.minute.toString().padLeft(2, '0')}';
+    } else if (timestamp is DateTime) {
+      return '${timestamp.hour}:${timestamp.minute.toString().padLeft(2, '0')}';
     }
     return 'Not set';
   }

@@ -2,403 +2,1320 @@ import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
-import '../modles/tournament_model.dart';
-import '../modles/user_registration_model.dart';
-
 class FirebaseService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
 
-  // ========== DASHBOARD METHODS ==========
-  Future<List<Map<String, dynamic>>> getTopPlayers({int limit = 10}) async {
+  // ========== LEADERBOARD MANAGEMENT ==========
+  Future<List<Map<String, dynamic>>> getLeaderboard({int limit = 10}) async {
     try {
       final snapshot = await _firestore
-          .collection('users')
-          .where('role', isEqualTo: 'user')
-          .orderBy('stats.totalEarnings', descending: true)
-          .limit(limit)
+          .collection('leader_board')
+          .doc('current_leaderboard')
           .get();
 
-      return snapshot.docs.map((doc) {
-        final data = doc.data();
-        final basicInfo = data['basicInfo'] ?? {};
-        final stats = data['stats'] ?? {};
-        final wallet = data['wallet'] ?? {};
+      if (snapshot.exists) {
+        final data = snapshot.data() as Map<String, dynamic>? ?? {};
+        final List<Map<String, dynamic>> leaderboard = [];
 
-        return {
-          'id': doc.id,
-          'name': basicInfo['name'] ?? 'Player',
-          'email': basicInfo['email'] ?? '',
-          'matchesWon': stats['totalMatchesWon'] ?? 0,
-          'totalWinnings': (wallet['totalWinnings'] ?? stats['totalEarnings'] ?? 0.0).toDouble(),
-          'winRate': stats['winRate'] ?? 0.0,
-          'profileImage': basicInfo['profileImage'] ?? '',
-          'rank': stats['rank'] ?? 'Beginner',
-        };
-      }).toList();
+        for (int i = 1; i <= limit; i++) {
+          final positionKey = 'position_$i';
+          final userId = data[positionKey] as String?;
+          if (userId != null) {
+            leaderboard.add({
+              'position': i,
+              'user_id': userId,
+            });
+          }
+        }
+
+        final List<Map<String, dynamic>> usersData = [];
+        for (var entry in leaderboard) {
+          // Get user by UID query
+          final userQuery = await _firestore.collection('users')
+              .where('uid', isEqualTo: entry['user_id'])
+              .limit(1)
+              .get();
+
+          if (userQuery.docs.isNotEmpty) {
+            final userDoc = userQuery.docs.first;
+            final userData = userDoc.data();
+            final userName = userDoc.id;
+
+            // Get wallet data
+            final walletDoc = await _firestore
+                .collection('wallet')
+                .doc('users')
+                .collection(userName)
+                .doc('wallet_data')
+                .get();
+
+            final walletData = walletDoc.data() ?? {};
+
+            usersData.add({
+              'position': entry['position'],
+              'user_id': entry['user_id'],
+              'name': (userData?['name'] as String?) ?? 'Player',
+              'total_winning': (walletData['total_winning'] as num?)?.toDouble() ?? 0.0,
+              'total_balance': (walletData['total_balance'] as num?)?.toDouble() ?? 0.0,
+            });
+          }
+        }
+
+        return usersData;
+      } else {
+        return await _generateLeaderboardFromUsers(limit: limit);
+      }
     } catch (e) {
-      print('❌ Error getting top players: $e');
-      return [];
+      print('❌ Error getting leaderboard: $e');
+      return await _generateLeaderboardFromUsers(limit: limit);
     }
   }
 
-  // Alternative method if you want to use a separate leaderboard collection
-  Future<List<Map<String, dynamic>>> getTopPlayersFromLeaderboard({int limit = 10}) async {
+  Future<List<Map<String, dynamic>>> _generateLeaderboardFromUsers({int limit = 10}) async {
     try {
-      final snapshot = await _firestore
-          .collection('leaderboard')
-          .orderBy('totalWinnings', descending: true)
-          .limit(limit)
-          .get();
+      final usersSnapshot = await _firestore.collection('users').limit(limit).get();
 
-      return snapshot.docs.map((doc) {
-        final data = doc.data();
-        return {
-          'id': doc.id,
-          'name': data['playerName'] ?? 'Player',
-          'matchesWon': data['matchesWon'] ?? 0,
-          'totalWinnings': (data['totalWinnings'] ?? 0.0).toDouble(),
-          'winRate': data['winRate'] ?? 0.0,
-          'profileImage': data['profileImage'] ?? '',
-          'rank': data['rank'] ?? 'Unranked',
-        };
-      }).toList();
+      final List<Map<String, dynamic>> leaderboard = [];
+      for (var i = 0; i < usersSnapshot.docs.length; i++) {
+        final doc = usersSnapshot.docs[i];
+        final userData = doc.data();
+        final userName = doc.id;
+
+        // Get wallet data for each user
+        final walletDoc = await _firestore
+            .collection('wallet')
+            .doc('users')
+            .collection(userName)
+            .doc('wallet_data')
+            .get();
+
+        final walletData = walletDoc.data() ?? {};
+
+        leaderboard.add({
+          'position': i + 1,
+          'user_id': userData['uid'] ?? '',
+          'name': (userData['name'] as String?) ?? 'Player',
+          'total_winning': (walletData['total_winning'] as num?)?.toDouble() ?? 0.0,
+          'total_balance': (walletData['total_balance'] as num?)?.toDouble() ?? 0.0,
+        });
+      }
+
+      // Sort by total_winning
+      leaderboard.sort((a, b) => (b['total_winning'] as double).compareTo(a['total_winning'] as double));
+
+      return leaderboard;
     } catch (e) {
-      print('❌ Error getting top players from leaderboard: $e');
-      return _getMockTopPlayers(); // Fallback to mock data
+      print('❌ Error generating leaderboard from users: $e');
+      return _getMockLeaderboard();
     }
   }
 
-  // Mock data fallback
-  List<Map<String, dynamic>> _getMockTopPlayers() {
+  List<Map<String, dynamic>> _getMockLeaderboard() {
     return [
       {
+        'position': 1,
+        'user_id': 'user_18',
         'name': 'Pro Player',
-        'matchesWon': 45,
-        'totalWinnings': 12500.00,
-        'winRate': 68.2,
-        'profileImage': '',
-        'rank': 'Diamond',
+        'total_winning': 12500.0,
+        'total_balance': 1500.0,
       },
       {
+        'position': 2,
+        'user_id': 'user_5',
         'name': 'Game Master',
-        'matchesWon': 32,
-        'totalWinnings': 8900.00,
-        'winRate': 59.8,
-        'profileImage': '',
-        'rank': 'Platinum',
+        'total_winning': 8900.0,
+        'total_balance': 1200.0,
       },
       {
+        'position': 3,
+        'user_id': 'user_200',
         'name': 'Battle Legend',
-        'matchesWon': 28,
-        'totalWinnings': 6700.00,
-        'winRate': 52.4,
-        'profileImage': '',
-        'rank': 'Gold',
-      },
-      {
-        'name': 'Ace Shooter',
-        'matchesWon': 21,
-        'totalWinnings': 4500.00,
-        'winRate': 48.7,
-        'profileImage': '',
-        'rank': 'Silver',
-      },
-      {
-        'name': 'Rookie Star',
-        'matchesWon': 15,
-        'totalWinnings': 2800.00,
-        'winRate': 42.3,
-        'profileImage': '',
-        'rank': 'Bronze',
+        'total_winning': 6700.0,
+        'total_balance': 900.0,
       },
     ];
   }
 
-  // Get user dashboard stats
-  Future<Map<String, dynamic>> getUserDashboardStats() async {
+  // ========== USER STATISTICS ==========
+  Future<Map<String, dynamic>> getUserStats() async {
     try {
-      final userId = _auth.currentUser?.uid;
-      if (userId == null) return {};
+      final userName = await getCurrentUserDocumentId();
+      if (userName == null) return {};
 
-      final doc = await _firestore.collection('users').doc(userId).get();
-      if (!doc.exists) return {};
+      // Get user document
+      final userQuery = await _firestore.collection('users')
+          .where('uid', isEqualTo: _auth.currentUser?.uid)
+          .limit(1)
+          .get();
 
-      final data = doc.data()!;
-      final stats = data['stats'] ?? {};
-      final wallet = data['wallet'] ?? {};
+      if (userQuery.docs.isEmpty) return {};
 
-      final totalMatches = stats['totalMatchesPlayed'] ?? 0;
-      final matchesWon = stats['totalMatchesWon'] ?? 0;
+      final userDoc = userQuery.docs.first;
+      final data = userDoc.data();
+
+      final matches = data?['matches'] as Map<String, dynamic>? ?? {};
+      final recentMatches = matches['recent_match'] as List? ?? [];
+      final wonMatches = matches['won_match'] as List? ?? [];
+      final lostMatches = matches['loss_match'] as List? ?? [];
+
+      final totalMatches = recentMatches.length;
+      final matchesWon = wonMatches.length;
       final winRate = totalMatches > 0 ? (matchesWon / totalMatches * 100) : 0;
 
+      // Get wallet balance
+      final currentBalance = await getWalletBalance();
+
+      // Get total winnings from wallet
+      final walletDoc = await _firestore
+          .collection('wallet')
+          .doc('users')
+          .collection(userName)
+          .doc('wallet_data')
+          .get();
+
+      final walletData = walletDoc.data() ?? {};
+      final totalWinnings = (walletData['total_winning'] as num?)?.toDouble() ?? 0.0;
+
       return {
-        'totalMatches': totalMatches,
-        'matchesWon': matchesWon,
-        'totalWinnings': (wallet['totalWinnings'] ?? 0.0).toDouble(),
-        'winRate': winRate,
-        'currentBalance': (wallet['balance'] ?? 0.0).toDouble(),
-        'tournamentsJoined': stats['totalTournamentsJoined'] ?? 0,
-        'rank': stats['rank'] ?? 'Beginner',
-        'experiencePoints': stats['experiencePoints'] ?? 0,
+        'total_matches': totalMatches,
+        'matches_won': matchesWon,
+        'matches_lost': lostMatches.length,
+        'win_rate': winRate,
+        'total_winnings': totalWinnings,
+        'current_balance': currentBalance,
+        'total_withdrawals': await _getTotalWithdrawals(),
       };
     } catch (e) {
-      print('❌ Error getting user dashboard stats: $e');
+      print('❌ Error getting user stats: $e');
       return {
-        'totalMatches': 0,
-        'matchesWon': 0,
-        'totalWinnings': 0.0,
-        'winRate': 0.0,
-        'currentBalance': 0.0,
-        'tournamentsJoined': 0,
-        'rank': 'Beginner',
-        'experiencePoints': 0,
+        'total_matches': 0,
+        'matches_won': 0,
+        'matches_lost': 0,
+        'win_rate': 0.0,
+        'total_winnings': 0.0,
+        'current_balance': 0.0,
+        'total_withdrawals': 0.0,
       };
     }
   }
 
-  // ========== USER MANAGEMENT ==========
-  Future<AppUser?> getCurrentUser() async {
+  Future<double> _getTotalWithdrawals() async {
+    try {
+      final userName = await getCurrentUserDocumentId();
+      if (userName == null) return 0.0;
+
+      final withdrawalDoc = await _firestore
+          .collection('wallet')
+          .doc('users')
+          .collection(userName)
+          .doc('withdrawal_requests')
+          .get();
+
+      if (withdrawalDoc.exists) {
+        final withdrawalData = withdrawalDoc.data() ?? {};
+        final approvedWithdrawals = withdrawalData['approved'] as List? ?? [];
+
+        double total = 0.0;
+        for (var withdrawal in approvedWithdrawals) {
+          if (withdrawal is Map<String, dynamic>) {
+            total += (withdrawal['amount'] as num?)?.toDouble() ?? 0.0;
+          }
+        }
+        return total;
+      }
+      return 0.0;
+    } catch (e) {
+      return 0.0;
+    }
+  }
+
+  // ========== FCM TOKEN MANAGEMENT ==========
+  Future<void> saveFCMToken(String token) async {
     try {
       final userId = _auth.currentUser?.uid;
-      if (userId == null) return null;
+      if (userId != null) {
+        // Get user document by UID query
+        final userQuery = await _firestore.collection('users')
+            .where('uid', isEqualTo: userId)
+            .limit(1)
+            .get();
 
-      final doc = await _firestore.collection('users').doc(userId).get();
-
-      if (doc.exists) {
-        print('✅ User profile loaded: ${doc.id}');
-        return AppUser.fromFirestore(doc);
-      } else {
-        print('⚠️ User profile not found, creating one...');
-        return await _createUserProfile(userId);
+        if (userQuery.docs.isNotEmpty) {
+          await _firestore.collection('users').doc(userQuery.docs.first.id).update({
+            'fcmToken': token,
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+          print('✅ FCM token saved successfully');
+        }
       }
     } catch (e) {
-      print('❌ Error getting user profile: $e');
-      return null;
+      print('❌ Error saving FCM token: $e');
     }
   }
 
-  Future<AppUser?> _createUserProfile(String userId) async {
+  // ========== RECENT MATCHES ==========
+  Future<List<Map<String, dynamic>>> getRecentMatches() async {
     try {
-      final userData = {
-        'basicInfo': {
-          'userId': userId,
-          'email': _auth.currentUser?.email ?? '',
-          'name': _auth.currentUser?.displayName ?? 'User',
-          'phone': _auth.currentUser?.phoneNumber ?? '',
-          'profileImage': '',
-          'country': 'India',
-          'createdAt': FieldValue.serverTimestamp(),
-          'updatedAt': FieldValue.serverTimestamp(),
-          'lastLogin': FieldValue.serverTimestamp(),
-          'isActive': true,
-          'isEmailVerified': _auth.currentUser?.emailVerified ?? false,
-          'isPhoneVerified': _auth.currentUser?.phoneNumber != null,
-        },
-        'wallet': {
-          'balance': 200.0, // Welcome bonus
-          'totalDeposited': 0.0,
-          'totalWithdrawn': 0.0,
-          'totalWinnings': 0.0,
-          'lastUpdated': FieldValue.serverTimestamp(),
-        },
-        'stats': {
-          'totalMatchesPlayed': 0,
-          'totalMatchesWon': 0,
-          'totalTournamentsJoined': 0,
-          'totalEarnings': 0.0,
-          'winRate': 0.0,
-          'favoriteGame': '',
-          'rank': 'Beginner',
-          'experiencePoints': 0,
-        },
-        'preferences': {
-          'notifications': {
-            'tournamentReminders': true,
-            'matchAlerts': true,
-            'promotional': false,
-            'results': true,
-          },
-          'language': 'en',
-          'theme': 'system',
-          'currency': 'INR',
-        },
-        'role': 'user',
-        'fcmToken': '',
-      };
+      final userId = _auth.currentUser?.uid;
+      if (userId == null) return [];
 
-      await _firestore.collection('users').doc(userId).set(userData);
-      print('✅ User profile created for: $userId');
+      // Get user document by UID query
+      final userQuery = await _firestore.collection('users')
+          .where('uid', isEqualTo: userId)
+          .limit(1)
+          .get();
 
-      final newDoc = await _firestore.collection('users').doc(userId).get();
-      return AppUser.fromFirestore(newDoc);
+      if (userQuery.docs.isEmpty) return [];
+
+      final userDoc = userQuery.docs.first;
+      final data = userDoc.data();
+      final matches = data?['matches'] as Map<String, dynamic>? ?? {};
+      final recentMatches = matches['recent_match'] as List? ?? [];
+
+      final List<Map<String, dynamic>> validMatches = [];
+      for (var match in recentMatches) {
+        if (match is Map<String, dynamic>) {
+          validMatches.add(match);
+        }
+      }
+
+      validMatches.sort((a, b) {
+        final timeA = a['timestamp'] as Timestamp? ?? Timestamp.now();
+        final timeB = b['timestamp'] as Timestamp? ?? Timestamp.now();
+        return timeB.compareTo(timeA);
+      });
+
+      return validMatches;
     } catch (e) {
-      print('❌ Error creating user profile: $e');
-      return null;
+      print('❌ Error getting recent matches: $e');
+      return [];
     }
   }
 
-  // ========== TOURNAMENT REGISTRATION METHODS ==========
-  Future<bool> hasUserRegisteredForTournament(String tournamentId) async {
+  Future<List<Map<String, dynamic>>> getWonMatches() async {
+    try {
+      final userId = _auth.currentUser?.uid;
+      if (userId == null) return [];
+
+      // Get user document by UID query
+      final userQuery = await _firestore.collection('users')
+          .where('uid', isEqualTo: userId)
+          .limit(1)
+          .get();
+
+      if (userQuery.docs.isEmpty) return [];
+
+      final userDoc = userQuery.docs.first;
+      final data = userDoc.data();
+      final matches = data?['matches'] as Map<String, dynamic>? ?? {};
+      final wonMatches = matches['won_match'] as List? ?? [];
+
+      final List<Map<String, dynamic>> validMatches = [];
+      for (var match in wonMatches) {
+        if (match is Map<String, dynamic>) {
+          validMatches.add(match);
+        }
+      }
+
+      return validMatches;
+    } catch (e) {
+      print('❌ Error getting won matches: $e');
+      return [];
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> getLostMatches() async {
+    try {
+      final userId = _auth.currentUser?.uid;
+      if (userId == null) return [];
+
+      // Get user document by UID query
+      final userQuery = await _firestore.collection('users')
+          .where('uid', isEqualTo: userId)
+          .limit(1)
+          .get();
+
+      if (userQuery.docs.isEmpty) return [];
+
+      final userDoc = userQuery.docs.first;
+      final data = userDoc.data();
+      final matches = data?['matches'] as Map<String, dynamic>? ?? {};
+      final lostMatches = matches['loss_match'] as List? ?? [];
+
+      final List<Map<String, dynamic>> validMatches = [];
+      for (var match in lostMatches) {
+        if (match is Map<String, dynamic>) {
+          validMatches.add(match);
+        }
+      }
+
+      return validMatches;
+    } catch (e) {
+      print('❌ Error getting lost matches: $e');
+      return [];
+    }
+  }
+
+  // ========== TOURNAMENT STATISTICS ==========
+  Future<Map<String, dynamic>> getUserTournamentStats() async {
+    try {
+      final registrations = await getUserTournamentRegistrations();
+
+      final totalTournaments = registrations.length;
+      final completedTournaments = registrations.where((reg) => reg['status'] == 'completed').length;
+      final wonTournaments = registrations.where((reg) => reg['result'] == 'won').length;
+      final activeRegistrations = registrations.where((reg) => reg['status'] == 'registered').length;
+
+      double totalWinnings = 0.0;
+      double totalEntryFees = 0.0;
+
+      for (var reg in registrations) {
+        totalEntryFees += (reg['entry_fee'] as num?)?.toDouble() ?? 0.0;
+        totalWinnings += (reg['winnings'] as num?)?.toDouble() ?? 0.0;
+      }
+
+      final netProfit = totalWinnings - totalEntryFees;
+      final winRate = completedTournaments > 0 ? (wonTournaments / completedTournaments * 100) : 0.0;
+
+      return {
+        'total_tournaments': totalTournaments,
+        'completed_tournaments': completedTournaments,
+        'won_tournaments': wonTournaments,
+        'active_registrations': activeRegistrations,
+        'total_entry_fees': totalEntryFees,
+        'total_winnings': totalWinnings,
+        'net_profit': netProfit,
+        'win_rate': winRate,
+      };
+    } catch (e) {
+      print('❌ Error getting user tournament stats: $e');
+      return {
+        'total_tournaments': 0,
+        'completed_tournaments': 0,
+        'won_tournaments': 0,
+        'active_registrations': 0,
+        'total_entry_fees': 0.0,
+        'total_winnings': 0.0,
+        'net_profit': 0.0,
+        'win_rate': 0.0,
+      };
+    }
+  }
+
+  // ========== MATCH MANAGEMENT ==========
+  Future<bool> addMatchToHistory({
+    required String tournamentName,
+    required String gameName,
+    required int position,
+    required int kills,
+    required double winnings,
+    required bool isWin,
+  }) async {
     try {
       final userId = _auth.currentUser?.uid;
       if (userId == null) return false;
 
-      final query = await _firestore
-          .collection('users')
-          .doc(userId)
-          .collection('registrations')
-          .where('tournamentId', isEqualTo: tournamentId)
+      // Get user document by UID query
+      final userQuery = await _firestore.collection('users')
+          .where('uid', isEqualTo: userId)
           .limit(1)
           .get();
 
-      final isRegistered = query.docs.isNotEmpty;
-      print('📝 Registration check - User: $userId, Tournament: $tournamentId, Registered: $isRegistered');
-      return isRegistered;
+      if (userQuery.docs.isEmpty) return false;
+
+      final matchData = <String, dynamic>{
+        'tournament_name': tournamentName,
+        'game_name': gameName,
+        'position': position,
+        'kills': kills,
+        'winnings': winnings,
+        'timestamp': DateTime.now().toIso8601String(),
+        'match_id': 'match_${DateTime.now().millisecondsSinceEpoch}',
+      };
+
+      final matchType = isWin ? 'won_match' : 'loss_match';
+
+      await _firestore.collection('users').doc(userQuery.docs.first.id).update({
+        'matches.recent_match': FieldValue.arrayUnion([matchData]),
+        'matches.$matchType': FieldValue.arrayUnion([matchData]),
+        'user_all_match_details': FieldValue.arrayUnion([matchData]),
+        'user_${isWin ? 'won' : 'loss'}_match_details': FieldValue.arrayUnion([matchData]),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+
+      if (winnings > 0) {
+        await addToWinnings(winnings);
+      }
+
+      print('✅ Match added to history: $tournamentName');
+      return true;
     } catch (e) {
-      print('❌ Error checking registration: $e');
+      print('❌ Error adding match to history: $e');
       return false;
     }
   }
 
-  Future<bool> registerForTournament({
-    required Tournament tournament,
+  // ========== USER MANAGEMENT ==========
+  Future<Map<String, dynamic>?> getCurrentUserData() async {
+    try {
+      final userId = _auth.currentUser?.uid;
+      if (userId == null) return null;
+
+      // Find user document by UID
+      final userQuery = await _firestore.collection('users')
+          .where('uid', isEqualTo: userId)
+          .limit(1)
+          .get();
+
+      if (userQuery.docs.isEmpty) {
+        return await _createNewUserStructure(userId);
+      }
+
+      final userDoc = userQuery.docs.first;
+      return userDoc.data();
+    } catch (e) {
+      print('❌ Error getting user data: $e');
+      return null;
+    }
+  }
+
+  Future<Map<String, dynamic>?> getCurrentUser() async {
+    try {
+      final userId = _auth.currentUser?.uid;
+      if (userId == null) return null;
+
+      final userQuery = await _firestore.collection('users')
+          .where('uid', isEqualTo: userId)
+          .limit(1)
+          .get();
+
+      if (userQuery.docs.isEmpty) return null;
+
+      return userQuery.docs.first.data();
+    } catch (e) {
+      print('❌ Error getting current user: $e');
+      return null;
+    }
+  }
+
+  Future<String?> getCurrentUserName() async {
+    try {
+      final userId = _auth.currentUser?.uid;
+      if (userId == null) return null;
+
+      final userQuery = await _firestore.collection('users')
+          .where('uid', isEqualTo: userId)
+          .limit(1)
+          .get();
+
+      if (userQuery.docs.isEmpty) return null;
+
+      final userData = userQuery.docs.first.data();
+      return userData['name'] as String?;
+    } catch (e) {
+      print('❌ Error getting current user name: $e');
+      return null;
+    }
+  }
+
+  Future<String?> getCurrentUserDocumentId() async {
+    try {
+      final userId = _auth.currentUser?.uid;
+      if (userId == null) return null;
+
+      final userQuery = await _firestore.collection('users')
+          .where('uid', isEqualTo: userId)
+          .limit(1)
+          .get();
+
+      if (userQuery.docs.isEmpty) return null;
+
+      return userQuery.docs.first.id;
+    } catch (e) {
+      print('❌ Error getting current user document ID: $e');
+      return null;
+    }
+  }
+
+  Future<Map<String, dynamic>> _createNewUserStructure(String userId) async {
+    try {
+      final userName = _auth.currentUser?.displayName ?? 'User ${DateTime.now().millisecondsSinceEpoch}';
+      final now = DateTime.now().toIso8601String();
+
+      final userData = {
+        'uid': userId,
+        'name': userName,
+        'phone': _auth.currentUser?.phoneNumber ?? '',
+        'email': _auth.currentUser?.email ?? '',
+        'welcome_bonus': 200.0,
+        'role': 'user',
+        'fcmToken': '',
+        'tournaments': {
+          'BGMI': {
+            'BGMI_NAME': '',
+            'BGMI_ID': '',
+          },
+          'FREEFIRE': {
+            'FREEFIRE_NAME': '',
+            'FREEFIRE_ID': '',
+          },
+          'VALORANT': {
+            'VALORANT_NAME': '',
+            'VALORANT_ID': '',
+          },
+          'COD_MOBILE': {
+            'COD_MOBILE_NAME': '',
+            'COD_MOBILE_ID': '',
+          },
+        },
+        'tournament_registrations': [],
+        'matches': {
+          'recent_match': [],
+          'won_match': [],
+          'loss_match': [],
+        },
+        'user_all_match_details': [],
+        'user_won_match_details': [],
+        'user_loss_match_details': [],
+        'createdAt': now,
+        'updatedAt': now,
+        'last_login': now,
+      };
+
+      // Create user document with name as document ID
+      await _firestore.collection('users').doc(userName).set(userData);
+
+      // Create wallet structure for the user
+      await _createUserWalletStructure(userName, userId);
+
+      print('✅ New user structure created for: $userName');
+      return userData;
+    } catch (e) {
+      print('❌ Error creating user structure: $e');
+      rethrow;
+    }
+  }
+
+  Future<void> _createUserWalletStructure(String userName, String userId) async {
+    try {
+      final now = DateTime.now().toIso8601String();
+
+      // Create wallet_data document
+      await _firestore
+          .collection('wallet')
+          .doc('users')
+          .collection(userName)
+          .doc('wallet_data')
+          .set({
+        'total_balance': 200.0, // Welcome bonus
+        'total_winning': 0.0,
+        'user_id': userId,
+        'user_name': userName,
+        'createdAt': now,
+        'updatedAt': now,
+      });
+
+      // Initialize transactions document
+      await _firestore
+          .collection('wallet')
+          .doc('users')
+          .collection(userName)
+          .doc('transactions')
+          .set({
+        'successful': [],
+        'failed': [],
+        'pending': [],
+      });
+
+      // Initialize withdrawal_requests document
+      await _firestore
+          .collection('wallet')
+          .doc('users')
+          .collection(userName)
+          .doc('withdrawal_requests')
+          .set({
+        'approved': [],
+        'denied': [],
+        'failed': [],
+        'pending': [],
+      });
+
+      print('✅ New wallet structure created for: $userName');
+    } catch (e) {
+      print('❌ Error creating wallet structure: $e');
+    }
+  }
+
+  // ========== WALLET MANAGEMENT ==========
+  Future<double> getWalletBalance() async {
+    try {
+      final userName = await getCurrentUserDocumentId();
+      if (userName == null) return 0.0;
+
+      final walletDoc = await _firestore
+          .collection('wallet')
+          .doc('users')
+          .collection(userName)
+          .doc('wallet_data')
+          .get();
+
+      if (walletDoc.exists) {
+        final walletData = walletDoc.data();
+        return (walletData?['total_balance'] as num?)?.toDouble() ?? 0.0;
+      }
+      return 0.0;
+    } catch (e) {
+      print('❌ Error getting wallet balance: $e');
+      return 0.0;
+    }
+  }
+
+  Future<double> getTotalWinnings() async {
+    try {
+      final userName = await getCurrentUserDocumentId();
+      if (userName == null) return 0.0;
+
+      final walletDoc = await _firestore
+          .collection('wallet')
+          .doc('users')
+          .collection(userName)
+          .doc('wallet_data')
+          .get();
+
+      if (walletDoc.exists) {
+        final walletData = walletDoc.data();
+        return (walletData?['total_winning'] as num?)?.toDouble() ?? 0.0;
+      }
+      return 0.0;
+    } catch (e) {
+      print('❌ Error getting total winnings: $e');
+      return 0.0;
+    }
+  }
+
+  Future<bool> addMoney(double amount, String paymentId, String paymentMethod) async {
+    try {
+      final userName = await getCurrentUserDocumentId();
+      if (userName == null) return false;
+
+      // Update wallet balance
+      await _firestore
+          .collection('wallet')
+          .doc('users')
+          .collection(userName)
+          .doc('wallet_data')
+          .update({
+        'total_balance': FieldValue.increment(amount),
+        'updatedAt': DateTime.now().toIso8601String(),
+      });
+
+      // Add transaction
+      final transactionData = {
+        'transaction_id': 'txn_${DateTime.now().millisecondsSinceEpoch}',
+        'type': 'credit',
+        'amount': amount,
+        'status': 'successful',
+        'description': 'Wallet recharge via $paymentMethod',
+        'payment_method': paymentMethod,
+        'payment_id': paymentId,
+        'timestamp': DateTime.now().toIso8601String(),
+      };
+
+      await _firestore
+          .collection('wallet')
+          .doc('users')
+          .collection(userName)
+          .doc('transactions')
+          .update({
+        'successful': FieldValue.arrayUnion([transactionData]),
+      });
+
+      print('✅ Money added to wallet: ₹$amount');
+      return true;
+    } catch (e) {
+      print('❌ Error adding money: $e');
+      return false;
+    }
+  }
+
+  Future<bool> deductFromWallet(double amount) async {
+    try {
+      final userName = await getCurrentUserDocumentId();
+      if (userName == null) return false;
+
+      final currentBalance = await getWalletBalance();
+      if (currentBalance < amount) {
+        return false;
+      }
+
+      await _firestore
+          .collection('wallet')
+          .doc('users')
+          .collection(userName)
+          .doc('wallet_data')
+          .update({
+        'total_balance': FieldValue.increment(-amount),
+        'updatedAt': DateTime.now().toIso8601String(),
+      });
+
+      return true;
+    } catch (e) {
+      print('❌ Error deducting from wallet: $e');
+      return false;
+    }
+  }
+
+  Future<bool> addToWinnings(double amount) async {
+    try {
+      final userName = await getCurrentUserDocumentId();
+      if (userName == null) return false;
+
+      await _firestore
+          .collection('wallet')
+          .doc('users')
+          .collection(userName)
+          .doc('wallet_data')
+          .update({
+        'total_winning': FieldValue.increment(amount),
+        'total_balance': FieldValue.increment(amount),
+        'updatedAt': DateTime.now().toIso8601String(),
+      });
+
+      return true;
+    } catch (e) {
+      print('❌ Error adding to winnings: $e');
+      return false;
+    }
+  }
+
+  // ========== TRANSACTIONS MANAGEMENT ==========
+  Future<List<Map<String, dynamic>>> getUserTransactions() async {
+    try {
+      final userName = await getCurrentUserDocumentId();
+      if (userName == null) return [];
+
+      final transactionsDoc = await _firestore
+          .collection('wallet')
+          .doc('users')
+          .collection(userName)
+          .doc('transactions')
+          .get();
+
+      if (transactionsDoc.exists) {
+        final transactionsData = transactionsDoc.data() ?? {};
+        final List<Map<String, dynamic>> allTransactions = [];
+
+        // Combine all transaction types
+        final successful = transactionsData['successful'] as List? ?? [];
+        final pending = transactionsData['pending'] as List? ?? [];
+        final failed = transactionsData['failed'] as List? ?? [];
+
+        for (var transaction in successful) {
+          if (transaction is Map<String, dynamic>) {
+            allTransactions.add({...transaction, 'status': 'successful'});
+          }
+        }
+
+        for (var transaction in pending) {
+          if (transaction is Map<String, dynamic>) {
+            allTransactions.add({...transaction, 'status': 'pending'});
+          }
+        }
+
+        for (var transaction in failed) {
+          if (transaction is Map<String, dynamic>) {
+            allTransactions.add({...transaction, 'status': 'failed'});
+          }
+        }
+
+        // Sort by timestamp (newest first)
+        allTransactions.sort((a, b) {
+          final timeA = _parseTimestamp(a['timestamp']);
+          final timeB = _parseTimestamp(b['timestamp']);
+          return timeB.compareTo(timeA);
+        });
+
+        return allTransactions;
+      }
+      return [];
+    } catch (e) {
+      print('❌ Error getting user transactions: $e');
+      return [];
+    }
+  }
+
+  DateTime _parseTimestamp(dynamic timestamp) {
+    if (timestamp is Timestamp) {
+      return timestamp.toDate();
+    } else if (timestamp is String) {
+      try {
+        return DateTime.parse(timestamp);
+      } catch (e) {
+        return DateTime.now();
+      }
+    }
+    return DateTime.now();
+  }
+
+  Future<bool> addTransaction({
+    required String type,
+    required double amount,
+    required String status,
+    required String description,
+    required String paymentMethod,
+  }) async {
+    try {
+      final userName = await getCurrentUserDocumentId();
+      if (userName == null) return false;
+
+      final transactionData = {
+        'transaction_id': 'txn_${DateTime.now().millisecondsSinceEpoch}',
+        'type': type,
+        'amount': amount,
+        'status': status,
+        'description': description,
+        'payment_method': paymentMethod,
+        'timestamp': DateTime.now().toIso8601String(),
+      };
+
+      await _firestore
+          .collection('wallet')
+          .doc('users')
+          .collection(userName)
+          .doc('transactions')
+          .update({
+        status: FieldValue.arrayUnion([transactionData]),
+      });
+
+      print('✅ Transaction added: $description');
+      return true;
+    } catch (e) {
+      print('❌ Error adding transaction: $e');
+      return false;
+    }
+  }
+
+  // ========== WITHDRAWAL MANAGEMENT ==========
+  Future<bool> requestWithdrawal({
+    required double amount,
+    required String upiId,
+  }) async {
+    try {
+      final userName = await getCurrentUserDocumentId();
+      if (userName == null) return false;
+
+      final currentBalance = await getWalletBalance();
+      if (currentBalance < amount) {
+        throw Exception('Insufficient balance for withdrawal');
+      }
+
+      final withdrawalId = 'wd_${DateTime.now().millisecondsSinceEpoch}';
+      final withdrawalData = {
+        'withdrawal_id': withdrawalId,
+        'amount': amount,
+        'upi_id': upiId,
+        'status': 'pending',
+        'requested_at': DateTime.now().toIso8601String(),
+        'user_id': _auth.currentUser?.uid,
+        'user_name': userName,
+      };
+
+      print('🔄 Adding withdrawal request ONLY to withdrawal_requests collection');
+      print('📝 Withdrawal details: ₹$amount to $upiId');
+
+      // Add ONLY to withdrawal_requests (NOT to transactions)
+      final withdrawalRef = _firestore
+          .collection('wallet')
+          .doc('users')
+          .collection(userName)
+          .doc('withdrawal_requests');
+
+      await withdrawalRef.set({
+        'pending': FieldValue.arrayUnion([withdrawalData])
+      }, SetOptions(merge: true));
+
+      print('✅ Withdrawal request added to withdrawal_requests/pending');
+
+      // Update wallet balance (deduct the withdrawal amount)
+      final walletRef = _firestore
+          .collection('wallet')
+          .doc('users')
+          .collection(userName)
+          .doc('wallet_data');
+
+      await walletRef.update({
+        'total_balance': FieldValue.increment(-amount),
+        'updatedAt': DateTime.now().toIso8601String(),
+      });
+
+      print('💰 Wallet balance updated: -₹$amount');
+
+      // DO NOT ADD TO TRANSACTIONS COLLECTION - ONLY WITHDRAWAL_REQUESTS
+      print('🚫 Withdrawal request NOT added to transactions collection');
+
+      return true;
+    } catch (e) {
+      print('❌ Error requesting withdrawal: $e');
+      return false;
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> getWithdrawalRequests() async {
+    try {
+      final userName = await getCurrentUserDocumentId();
+      if (userName == null) return [];
+
+      final withdrawalDoc = await _firestore
+          .collection('wallet')
+          .doc('users')
+          .collection(userName)
+          .doc('withdrawal_requests')
+          .get();
+
+      if (withdrawalDoc.exists) {
+        final withdrawalData = withdrawalDoc.data() ?? {};
+        final List<Map<String, dynamic>> allRequests = [];
+
+        // Check all possible status arrays
+        final statusArrays = {
+          'approved': 'approved',
+          'denied': 'denied',
+          'failed': 'failed',
+          'pending': 'pending',
+          'completed': 'completed',
+        };
+
+        for (var entry in statusArrays.entries) {
+          final requests = withdrawalData[entry.key] as List? ?? [];
+          print('📊 ${entry.key} withdrawal requests: ${requests.length}');
+
+          for (var request in requests) {
+            if (request is Map<String, dynamic>) {
+              allRequests.add({
+                ...request,
+                'status': entry.value,
+              });
+            }
+          }
+        }
+
+        // Sort by date (newest first)
+        allRequests.sort((a, b) {
+          final timeA = _parseTimestamp(a['requested_at'] ?? a['processed_at'] ?? a['timestamp']);
+          final timeB = _parseTimestamp(b['requested_at'] ?? b['processed_at'] ?? b['timestamp']);
+          return timeB.compareTo(timeA);
+        });
+
+        print('✅ Total withdrawal requests loaded: ${allRequests.length}');
+        return allRequests;
+      } else {
+        print('❌ Withdrawal requests document does not exist');
+        return [];
+      }
+    } catch (e) {
+      print('❌ Error getting withdrawal requests: $e');
+      return [];
+    }
+  }
+
+  // Clean up duplicate withdrawal transactions
+  Future<void> cleanupDuplicateWithdrawalTransactions() async {
+    try {
+      final userName = await getCurrentUserDocumentId();
+      if (userName == null) return;
+
+      final transactionsRef = _firestore
+          .collection('wallet')
+          .doc('users')
+          .collection(userName)
+          .doc('transactions');
+
+      final transactionsDoc = await transactionsRef.get();
+      if (!transactionsDoc.exists) return;
+
+      final transactionsData = transactionsDoc.data() ?? {};
+
+      // Remove withdrawal transactions from all status arrays
+      final statusArrays = ['pending', 'successful', 'failed', 'completed'];
+      final updates = <String, dynamic>{};
+      int removedCount = 0;
+
+      for (var status in statusArrays) {
+        final transactions = transactionsData[status] as List? ?? [];
+        final filteredTransactions = transactions.where((transaction) {
+          if (transaction is Map<String, dynamic>) {
+            final isWithdrawal = transaction['description']?.toString().toLowerCase().contains('withdrawal') ?? false;
+            if (isWithdrawal) {
+              removedCount++;
+              print('🗑️ Removing withdrawal transaction from $status: ${transaction['transaction_id']}');
+            }
+            return !isWithdrawal;
+          }
+          return true;
+        }).toList();
+
+        updates[status] = filteredTransactions;
+      }
+
+      if (removedCount > 0) {
+        await transactionsRef.update(updates);
+        print('✅ Cleaned up $removedCount duplicate withdrawal transactions');
+      } else {
+        print('✅ No duplicate withdrawal transactions found');
+      }
+    } catch (e) {
+      print('❌ Error cleaning up duplicate withdrawals: $e');
+    }
+  }
+
+  // ========== TOURNAMENT REGISTRATION MANAGEMENT ==========
+  Future<bool> registerForTournamentWithObject({
+    required dynamic tournament,
     required String playerName,
     required String playerId,
     required String paymentId,
     required String paymentMethod,
   }) async {
     try {
-      final userId = _auth.currentUser!.uid;
-      final userEmail = _auth.currentUser!.email ?? '';
+      final userId = _auth.currentUser?.uid;
+      if (userId == null) return false;
 
-      print('🧩 Starting tournament registration for user: $userId');
+      final tournamentId = tournament.id?.toString() ?? '';
+      final isRegistered = await isUserRegisteredForTournament(tournamentId);
+      if (isRegistered) {
+        throw Exception('You are already registered for this tournament');
+      }
+
+      final entryFee = (tournament.entryFee as num?)?.toDouble() ?? 0.0;
+      final currentBalance = await getWalletBalance();
+      if (currentBalance < entryFee && paymentMethod != 'razorpay') {
+        throw Exception('Insufficient balance for tournament registration');
+      }
 
       return await _firestore.runTransaction((transaction) async {
-        // Step 1: Check if user already registered
-        final registrationQuery = await _firestore
-            .collection('users')
-            .doc(userId)
-            .collection('registrations')
-            .where('tournamentId', isEqualTo: tournament.id)
-            .limit(1)
-            .get();
-
-        if (registrationQuery.docs.isNotEmpty) {
-          throw Exception('You are already registered for this tournament');
-        }
-
-        // Step 2: Get and validate tournament
         final tournamentDoc = await transaction.get(
-            _firestore.collection('tournaments').doc(tournament.id));
+            _firestore.collection('tournaments').doc(tournamentId)
+        );
 
         if (!tournamentDoc.exists) {
           throw Exception('Tournament not found');
         }
 
         final tournamentData = tournamentDoc.data()!;
-        final basicInfo = tournamentData['basicInfo'] ?? {};
-        final registeredPlayers = (basicInfo['registeredPlayers'] ?? 0).toInt();
-        final maxPlayers = (basicInfo['maxPlayers'] ?? 0).toInt();
+        final currentRegisteredPlayers = (tournamentData['registered_players'] as num?)?.toInt() ?? 0;
+        final totalSlots = (tournamentData['total_slots'] as num?)?.toInt() ?? 0;
+        final slotsLeft = totalSlots - currentRegisteredPlayers;
 
-        if (registeredPlayers >= maxPlayers) {
+        if (slotsLeft <= 0) {
           throw Exception('Tournament is full');
         }
 
-        // Step 3: If using wallet, check balance and deduct
+        // Get user document ID (user name) for wallet operations
+        final userQuery = await _firestore.collection('users')
+            .where('uid', isEqualTo: userId)
+            .limit(1)
+            .get();
+
+        if (userQuery.docs.isEmpty) throw Exception('User document not found');
+        final userDocRef = _firestore.collection('users').doc(userQuery.docs.first.id);
+        final userName = userQuery.docs.first.id;
+
+        // Deduct from wallet if using wallet payment
         if (paymentMethod == 'wallet') {
-          final userDoc = await transaction.get(_firestore.collection('users').doc(userId));
-          final userData = userDoc.data();
-          final wallet = userData?['wallet'] ?? {};
-          final currentBalance = (wallet['balance'] ?? 0.0).toDouble();
+          final walletRef = _firestore
+              .collection('wallet')
+              .doc('users')
+              .collection(userName)
+              .doc('wallet_data');
 
-          if (currentBalance < tournament.entryFee) {
-            throw Exception('Insufficient wallet balance');
-          }
-
-          // Deduct from wallet
-          transaction.update(_firestore.collection('users').doc(userId), {
-            'wallet.balance': FieldValue.increment(-tournament.entryFee),
-            'wallet.totalWithdrawn': FieldValue.increment(tournament.entryFee),
-            'wallet.lastUpdated': FieldValue.serverTimestamp(),
+          transaction.update(walletRef, {
+            'total_balance': FieldValue.increment(-entryFee),
+            'updatedAt': DateTime.now().toIso8601String(),
           });
         }
 
-        // Step 4: Create registration
         final registrationId = 'reg_${DateTime.now().millisecondsSinceEpoch}';
-        final registrationRef = _firestore
-            .collection('users')
-            .doc(userId)
-            .collection('registrations')
-            .doc(registrationId);
-
-        final registrationData = {
-          'registrationId': registrationId,
-          'tournamentId': tournament.id,
-          'tournamentName': tournament.tournamentName,
-          'gameName': tournament.gameName,
-          'playerName': playerName,
-          'playerId': playerId,
-          'userId': userId,
-          'userEmail': userEmail,
-          'entryFee': tournament.entryFee,
-          'paymentId': paymentId,
-          'paymentMethod': paymentMethod,
+        final registrationData = <String, dynamic>{
+          'registration_id': registrationId,
+          'tournament_id': tournamentId,
+          'tournament_name': tournament.tournamentName ?? '',
+          'game_name': tournament.gameName ?? '',
+          'game_id': tournament.gameId ?? '',
+          'entry_fee': entryFee,
+          'winning_prize': tournament.winningPrize ?? 0.0,
+          'total_slots': totalSlots,
+          'slots_left': slotsLeft - 1,
+          'tournament_type': tournament.tournamentType ?? '',
+          'match_time': tournament.matchTime ?? '',
+          'map': tournament.map ?? '',
+          'mode': tournament.mode ?? '',
+          'description': tournament.description ?? '',
+          'player_name': playerName,
+          'player_id': playerId,
+          'user_id': userId,
+          'user_name': userName,
+          'registration_date': DateTime.now().toIso8601String(),
           'status': 'registered',
-          'joinedAt': FieldValue.serverTimestamp(),
-          'createdAt': FieldValue.serverTimestamp(),
+          'position': null,
+          'kills': 0,
+          'winnings': 0.0,
+          'result': 'pending',
+          'payment_id': paymentId,
+          'payment_method': paymentMethod,
         };
 
-        transaction.set(registrationRef, registrationData);
-
-        // Step 5: Update tournament player count
-        transaction.update(_firestore.collection('tournaments').doc(tournament.id), {
-          'basicInfo.registeredPlayers': FieldValue.increment(1),
-          'metadata.updatedAt': FieldValue.serverTimestamp(),
+        transaction.update(userDocRef, {
+          'tournament_registrations': FieldValue.arrayUnion([registrationData]),
+          'updatedAt': FieldValue.serverTimestamp(),
         });
 
-        // Step 6: Create transaction record
-        final transactionRef = _firestore
-            .collection('users')
-            .doc(userId)
-            .collection('transactions')
-            .doc();
-
-        transaction.set(transactionRef, {
-          'id': transactionRef.id,
-          'userId': userId,
-          'type': paymentMethod == 'wallet' ? 'debit' : 'tournament_entry',
-          'amount': tournament.entryFee,
-          'currency': 'INR',
-          'status': 'completed',
-          'paymentGateway': paymentMethod,
-          'paymentId': paymentId,
-          'description': 'Tournament Entry: ${tournament.tournamentName}',
-          'metadata': {
-            'tournamentId': tournament.id,
-            'tournamentName': tournament.tournamentName,
-            'playerName': playerName,
-          },
-          'createdAt': FieldValue.serverTimestamp(),
-          'processedAt': FieldValue.serverTimestamp(),
+        transaction.update(_firestore.collection('tournaments').doc(tournamentId), {
+          'registered_players': FieldValue.increment(1),
+          'slots_left': FieldValue.increment(-1),
+          'joined_players': FieldValue.arrayUnion([userId]),
+          'updated_at': FieldValue.serverTimestamp(),
         });
 
-        // Step 7: Update user stats
-        transaction.update(_firestore.collection('users').doc(userId), {
-          'stats.totalTournamentsJoined': FieldValue.increment(1),
-          'stats.updatedAt': FieldValue.serverTimestamp(),
+        // Add transaction record to wallet
+        final transactionData = {
+          'transaction_id': 'txn_${DateTime.now().millisecondsSinceEpoch}',
+          'type': 'debit',
+          'amount': entryFee,
+          'status': paymentMethod == 'wallet' ? 'successful' : 'pending',
+          'description': 'Tournament registration: ${tournament.tournamentName}',
+          'payment_method': paymentMethod,
+          'tournament_id': tournamentId,
+          'tournament_name': tournament.tournamentName,
+          'timestamp': DateTime.now().toIso8601String(),
+        };
+
+        final transactionsRef = _firestore
+            .collection('wallet')
+            .doc('users')
+            .collection(userName)
+            .doc('transactions');
+
+        transaction.update(transactionsRef, {
+          paymentMethod == 'wallet' ? 'successful' : 'pending': FieldValue.arrayUnion([transactionData]),
         });
 
-        print('✅ Tournament registration completed successfully');
+        print('✅ Successfully registered for tournament: ${tournament.tournamentName}');
         return true;
       });
-    } catch (e, st) {
-      print('❌ Error in tournament registration: $e');
-      print('🧾 Stack trace:\n$st');
+    } catch (e) {
+      print('❌ Error registering for tournament: $e');
       return false;
     }
   }
 
+  Future<bool> isUserRegisteredForTournament(String tournamentId) async {
+    try {
+      final userId = _auth.currentUser?.uid;
+      if (userId == null) return false;
+
+      // Get user document by UID query
+      final userQuery = await _firestore.collection('users')
+          .where('uid', isEqualTo: userId)
+          .limit(1)
+          .get();
+
+      if (userQuery.docs.isEmpty) return false;
+
+      final userDoc = userQuery.docs.first;
+      final data = userDoc.data() ?? {};
+      final registrations = data['tournament_registrations'] as List? ?? [];
+
+      for (var registration in registrations) {
+        if (registration is Map<String, dynamic> &&
+            registration['tournament_id'] == tournamentId &&
+            registration['status'] != 'cancelled') {
+          return true;
+        }
+      }
+      return false;
+    } catch (e) {
+      print('❌ Error checking tournament registration: $e');
+      return false;
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> getUserTournamentRegistrations() async {
+    try {
+      final userId = _auth.currentUser?.uid;
+      if (userId == null) return [];
+
+      // Get user document by UID query
+      final userQuery = await _firestore.collection('users')
+          .where('uid', isEqualTo: userId)
+          .limit(1)
+          .get();
+
+      if (userQuery.docs.isEmpty) return [];
+
+      final userDoc = userQuery.docs.first;
+      final data = userDoc.data() ?? {};
+      final registrations = data['tournament_registrations'] as List? ?? [];
+
+      List<Map<String, dynamic>> sortedRegistrations = [];
+      for (var reg in registrations) {
+        if (reg is Map<String, dynamic>) {
+          sortedRegistrations.add(reg);
+        }
+      }
+
+      sortedRegistrations.sort((a, b) {
+        final timeA = _parseTimestamp(a['registration_date']);
+        final timeB = _parseTimestamp(b['registration_date']);
+        return timeB.compareTo(timeA);
+      });
+
+      return sortedRegistrations;
+    } catch (e) {
+      print('❌ Error getting tournament registrations: $e');
+      return [];
+    }
+  }
+
+  // ========== ADMIN METHODS ==========
+  Future<List<Map<String, dynamic>>> getAllUsers() async {
+    try {
+      final snapshot = await _firestore.collection('users').limit(100).get();
+
+      final List<Map<String, dynamic>> users = [];
+      for (var doc in snapshot.docs) {
+        final data = doc.data() as Map<String, dynamic>;
+        final userName = doc.id;
+
+        // Get wallet data for each user
+        final walletDoc = await _firestore
+            .collection('wallet')
+            .doc('users')
+            .collection(userName)
+            .doc('wallet_data')
+            .get();
+
+        final walletData = walletDoc.data() ?? {};
+
+        users.add({
+          'id': doc.id,
+          'name': (data['name'] as String?) ?? 'User',
+          'email': (data['email'] as String?) ?? '',
+          'phone': (data['phone'] as String?) ?? '',
+          'wallet_balance': (walletData['total_balance'] as num?)?.toDouble() ?? 0.0,
+          'total_winnings': (walletData['total_winning'] as num?)?.toDouble() ?? 0.0,
+          'created_at': data['createdAt'],
+          'last_login': data['last_login'],
+          'role': data['role'] ?? 'user',
+        });
+      }
+
+      return users;
+    } catch (e) {
+      print('❌ Error getting all users: $e');
+      return [];
+    }
+  }
 
   // ========== GAME PROFILES MANAGEMENT ==========
   Future<bool> saveUserGameProfile({
@@ -411,30 +1328,21 @@ class FirebaseService {
       final userId = _auth.currentUser?.uid;
       if (userId == null) return false;
 
-      final gameProfileData = {
-        'gameId': gameId,
-        'gameName': gameName,
-        'playerName': playerName,
-        'playerId': playerId,
-        'level': 1,
-        'rank': 'Bronze',
-        'stats': {
-          'kills': 0,
-          'deaths': 0,
-          'wins': 0,
-          'matchesPlayed': 0,
-          'kdRatio': 0.0,
-        },
-        'isVerified': false,
-        'lastUpdated': FieldValue.serverTimestamp(),
-      };
+      // Get user document by UID query
+      final userQuery = await _firestore.collection('users')
+          .where('uid', isEqualTo: userId)
+          .limit(1)
+          .get();
 
-      await _firestore
-          .collection('users')
-          .doc(userId)
-          .collection('gameProfiles')
-          .doc(gameId)
-          .set(gameProfileData);
+      if (userQuery.docs.isEmpty) return false;
+
+      final gameKey = gameName.toUpperCase().replaceAll(' ', '_');
+
+      await _firestore.collection('users').doc(userQuery.docs.first.id).update({
+        'tournaments.$gameKey.${gameKey}_NAME': playerName,
+        'tournaments.$gameKey.${gameKey}_ID': playerId,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
 
       print('✅ Game profile saved for $gameName');
       return true;
@@ -444,654 +1352,35 @@ class FirebaseService {
     }
   }
 
-  Future<Map<String, dynamic>?> getGameProfile(String gameId) async {
+  Future<Map<String, dynamic>?> getGameProfile(String gameName) async {
     try {
       final userId = _auth.currentUser?.uid;
       if (userId == null) return null;
 
-      final doc = await _firestore
-          .collection('users')
-          .doc(userId)
-          .collection('gameProfiles')
-          .doc(gameId)
+      // Get user document by UID query
+      final userQuery = await _firestore.collection('users')
+          .where('uid', isEqualTo: userId)
+          .limit(1)
           .get();
 
-      return doc.exists ? doc.data() : null;
+      if (userQuery.docs.isEmpty) return null;
+
+      final userDoc = userQuery.docs.first;
+      final data = userDoc.data();
+      final tournaments = data?['tournaments'] as Map<String, dynamic>? ?? {};
+      final gameKey = gameName.toUpperCase().replaceAll(' ', '_');
+
+      final profile = tournaments[gameKey];
+      return profile is Map<String, dynamic> ? profile : null;
     } catch (e) {
       print('❌ Error getting game profile: $e');
       return null;
     }
   }
 
-  // ========== WALLET & PAYMENT METHODS ==========
-  Future<bool> deductFromWallet(double amount) async {
-    try {
-      final userId = _auth.currentUser?.uid;
-      if (userId == null) return false;
-
-      // Use transaction for atomic operations
-      return await _firestore.runTransaction((transaction) async {
-        final userDoc = await transaction.get(_firestore.collection('users').doc(userId));
-        final userData = userDoc.data();
-
-        if (userData == null) return false;
-
-        final wallet = userData['wallet'] ?? {};
-        final currentBalance = (wallet['balance'] ?? 0.0).toDouble();
-        if (currentBalance < amount) {
-          print('❌ Insufficient balance: $currentBalance, required: $amount');
-          return false;
-        }
-
-        // Update wallet
-        transaction.update(_firestore.collection('users').doc(userId), {
-          'wallet.balance': FieldValue.increment(-amount),
-          'wallet.totalWithdrawn': FieldValue.increment(amount),
-          'wallet.lastUpdated': FieldValue.serverTimestamp(),
-        });
-
-        // Create transaction record
-        final transactionRef = _firestore
-            .collection('users')
-            .doc(userId)
-            .collection('transactions')
-            .doc();
-
-        transaction.set(transactionRef, {
-          'type': 'debit',
-          'amount': amount,
-          'currency': 'INR',
-          'status': 'completed',
-          'paymentGateway': 'wallet',
-          'description': 'Tournament registration fee',
-          'metadata': {},
-          'createdAt': FieldValue.serverTimestamp(),
-          'processedAt': FieldValue.serverTimestamp(),
-        });
-
-        return true;
-      });
-    } catch (e) {
-      print('❌ Error deducting from wallet: $e');
-      return false;
-    }
-  }
-
-  Future<void> addMoney(double amount, String paymentId, String gateway) async {
-    try {
-      final userId = _auth.currentUser!.uid;
-
-      final batch = _firestore.batch();
-      final userRef = _firestore.collection('users').doc(userId);
-      final transactionRef = _firestore
-          .collection('users')
-          .doc(userId)
-          .collection('transactions')
-          .doc();
-
-      // Update wallet
-      batch.update(userRef, {
-        'wallet.balance': FieldValue.increment(amount),
-        'wallet.totalDeposited': FieldValue.increment(amount),
-        'wallet.lastUpdated': FieldValue.serverTimestamp(),
-      });
-
-      // Create transaction record
-      batch.set(transactionRef, {
-        'type': 'credit',
-        'amount': amount,
-        'currency': 'INR',
-        'status': 'completed',
-        'paymentGateway': gateway,
-        'paymentId': paymentId,
-        'description': 'Money Added via $gateway',
-        'metadata': {'gateway_response': paymentId},
-        'createdAt': FieldValue.serverTimestamp(),
-        'processedAt': FieldValue.serverTimestamp(),
-      });
-
-      await batch.commit();
-      print('✅ Money added successfully: $amount, Payment ID: $paymentId');
-    } catch (e) {
-      print('❌ Error adding money: $e');
-      throw e;
-    }
-  }
-
-  // ========== TOURNAMENT METHODS ==========
-  Future<List<Tournament>> getTournamentsByGame(String gameName) async {
-    try {
-      final snapshot = await _firestore
-          .collection('tournaments')
-          .where('basicInfo.gameName', isEqualTo: gameName)
-          .where('basicInfo.status', whereIn: ['upcoming', 'live'])
-          .orderBy('schedule.tournamentStart')
-          .limit(50)
-          .get();
-
-      final tournaments = snapshot.docs.map((doc) {
-        return Tournament.fromFirestore(doc);
-      }).toList();
-
-      print('✅ Loaded ${tournaments.length} tournaments for $gameName');
-      return tournaments;
-    } catch (e) {
-      print('❌ Error getting tournaments: $e');
-      return [];
-    }
-  }
-
-  Future<List<Tournament>> getUpcomingTournaments() async {
-    try {
-      final snapshot = await _firestore
-          .collection('tournaments')
-          .where('basicInfo.status', isEqualTo: 'upcoming')
-          .where('schedule.registrationEnd', isGreaterThan: Timestamp.now())
-          .orderBy('schedule.registrationEnd')
-          .limit(20)
-          .get();
-
-      return snapshot.docs.map((doc) => Tournament.fromFirestore(doc)).toList();
-    } catch (e) {
-      print('❌ Error getting upcoming tournaments: $e');
-      return [];
-    }
-  }
-
-  Future<Tournament?> getTournamentById(String tournamentId) async {
-    try {
-      final doc = await _firestore.collection('tournaments').doc(tournamentId).get();
-      return doc.exists ? Tournament.fromFirestore(doc) : null;
-    } catch (e) {
-      print('❌ Error getting tournament: $e');
-      return null;
-    }
-  }
-
-  // ========== MATCH CREDENTIALS ==========
-  Future<Map<String, dynamic>?> getMatchCredentials(String tournamentId) async {
-    try {
-      final userId = _auth.currentUser?.uid;
-      if (userId == null) return null;
-
-      final query = await _firestore
-          .collection('matchCredentials')
-          .where('tournamentId', isEqualTo: tournamentId)
-          .where('participants', arrayContains: userId)
-          .limit(1)
-          .get();
-
-      return query.docs.isNotEmpty ? query.docs.first.data() : null;
-    } catch (e) {
-      print('❌ Error getting match credentials: $e');
-      return null;
-    }
-  }
-
-  // ========== TRANSACTION METHODS ==========
-  Future<List<Map<String, dynamic>>> getUserTransactions() async {
-    try {
-      final userId = _auth.currentUser?.uid;
-      if (userId == null) return [];
-
-      final snapshot = await _firestore
-          .collection('users')
-          .doc(userId)
-          .collection('transactions')
-          .orderBy('createdAt', descending: true)
-          .limit(20)
-          .get();
-
-      return snapshot.docs.map((doc) {
-        final data = doc.data();
-        return {
-          'id': doc.id,
-          ...data,
-          'date': _formatDate(data['createdAt']),
-        };
-      }).toList();
-    } catch (e) {
-      print('❌ Error getting transactions: $e');
-      return [];
-    }
-  }
-
-  // ========== USER REGISTRATIONS ==========
-  Future<List<Map<String, dynamic>>> getUserRegistrations() async {
-    try {
-      final userId = _auth.currentUser?.uid;
-      if (userId == null) return [];
-
-      final snapshot = await _firestore
-          .collection('users')
-          .doc(userId)
-          .collection('registrations')
-          .orderBy('joinedAt', descending: true)
-          .limit(20)
-          .get();
-
-      return snapshot.docs.map((doc) {
-        final data = doc.data();
-        return {
-          'id': doc.id,
-          ...data,
-          'joinedDate': _formatDate(data['joinedAt']),
-        };
-      }).toList();
-    } catch (e) {
-      print('❌ Error getting user registrations: $e');
-      return [];
-    }
-  }
-
-  // ========== ADMIN METHODS ==========
-  // In FirebaseService - Fix the getAllUsers method
-  Future<List<Map<String, dynamic>>> getAllUsers() async {
-    try {
-      final snapshot = await _firestore
-          .collection('users')
-          .limit(100)
-          .get();
-
-      return snapshot.docs.map((doc) {
-        final data = doc.data();
-        final basicInfo = data['basicInfo'] ?? {};
-        final wallet = data['wallet'] ?? {};
-        final stats = data['stats'] ?? {};
-
-        return {
-          'id': doc.id,
-          'name': basicInfo['name'] ?? 'User',
-          'email': basicInfo['email'] ?? '',
-          'walletBalance': (wallet['balance'] ?? 0.0).toDouble(),
-          'totalMatches': stats['totalMatchesPlayed'] ?? 0,
-          'totalWinnings': (wallet['totalWinnings'] ?? stats['totalEarnings'] ?? 0.0).toDouble(),
-          'joinedAt': basicInfo['createdAt'],
-          'role': data['role'] ?? 'user', // Add this line
-        };
-      }).toList();
-    } catch (e) {
-      print('❌ Error getting all users: $e');
-      return [];
-    }
-  }
-
-  // Admin methods for bulk operations
-  Future<void> addWelcomeBonusToAllUsers() async {
-    try {
-      final usersSnapshot = await _firestore.collection('users').get();
-      final batch = _firestore.batch();
-
-      for (var doc in usersSnapshot.docs) {
-        final userData = doc.data();
-        final wallet = userData['wallet'] ?? {};
-        final currentBalance = (wallet['balance'] ?? 0.0).toDouble();
-
-        if (currentBalance < 200.0) {
-          batch.update(doc.reference, {
-            'wallet.balance': FieldValue.increment(200.0 - currentBalance),
-            'wallet.lastUpdated': FieldValue.serverTimestamp(),
-          });
-        }
-      }
-
-      await batch.commit();
-      print('✅ Welcome bonus added to all eligible users');
-    } catch (e) {
-      print('❌ Error adding welcome bonus: $e');
-      throw e;
-    }
-  }
-
-  // Get all transactions across all users (admin view)
-  Future<List<Map<String, dynamic>>> getAllTransactions() async {
-    try {
-      final snapshot = await _firestore
-          .collectionGroup('transactions')
-          .orderBy('createdAt', descending: true)
-          .limit(100)
-          .get();
-
-      return snapshot.docs.map((doc) {
-        final data = doc.data();
-        return {
-          'id': doc.id,
-          ...data,
-          'date': _formatDate(data['createdAt']),
-        };
-      }).toList();
-    } catch (e) {
-      print('❌ Error getting all transactions: $e');
-      return [];
-    }
-  }
-
-  // Get user by ID for admin
-  Future<AppUser?> getUserById(String userId) async {
-    try {
-      final doc = await _firestore.collection('users').doc(userId).get();
-      return doc.exists ? AppUser.fromFirestore(doc) : null;
-    } catch (e) {
-      print('❌ Error getting user by ID: $e');
-      return null;
-    }
-  }
-
-  // Update user role
-  Future<void> updateUserRole(String userId, String newRole) async {
-    try {
-      await _firestore.collection('users').doc(userId).update({
-        'role': newRole,
-        'basicInfo.updatedAt': FieldValue.serverTimestamp(),
-      });
-      print('✅ User role updated to: $newRole');
-    } catch (e) {
-      print('❌ Error updating user role: $e');
-      throw e;
-    }
-  }
-
-  // ========== NOTIFICATION METHODS ==========
-  Future<void> saveFCMToken(String token) async {
-    try {
-      final userId = _auth.currentUser?.uid;
-      if (userId != null) {
-        await _firestore.collection('users').doc(userId).update({
-          'fcmToken': token,
-        });
-      }
-    } catch (e) {
-      print('❌ Error saving FCM token: $e');
-    }
-  }
-
-  Future<List<Map<String, dynamic>>> getUserNotifications() async {
-    try {
-      final userId = _auth.currentUser?.uid;
-      if (userId == null) return [];
-
-      final snapshot = await _firestore
-          .collection('users')
-          .doc(userId)
-          .collection('notifications')
-          .where('expiresAt', isGreaterThan: Timestamp.now())
-          .orderBy('createdAt', descending: true)
-          .limit(20)
-          .get();
-
-      return snapshot.docs.map((doc) {
-        final data = doc.data();
-        return {
-          'id': doc.id,
-          ...data,
-          'time': _formatTimeAgo(data['createdAt']),
-        };
-      }).toList();
-    } catch (e) {
-      print('❌ Error getting notifications: $e');
-      return [];
-    }
-  }
-
-  // ========== HELPER METHODS ==========
-  String _formatDate(dynamic timestamp) {
-    if (timestamp == null) return 'Recently';
-    if (timestamp is Timestamp) {
-      final date = timestamp.toDate();
-      return '${date.day}/${date.month}/${date.year}';
-    }
-    return timestamp.toString();
-  }
-
-  String _formatTimeAgo(dynamic timestamp) {
-    if (timestamp is! Timestamp) return 'Recently';
-
-    final now = DateTime.now();
-    final date = timestamp.toDate();
-    final difference = now.difference(date);
-
-    if (difference.inMinutes < 1) return 'Just now';
-    if (difference.inMinutes < 60) return '${difference.inMinutes}m ago';
-    if (difference.inHours < 24) return '${difference.inHours}h ago';
-    if (difference.inDays < 7) return '${difference.inDays}d ago';
-
-    return '${date.day}/${date.month}/${date.year}';
-  }
-  // Add this method to your FirebaseService class
-
-// ========== MATCH HISTORY METHODS ==========
-  Future<List<Map<String, dynamic>>> getUserMatches() async {
-    try {
-      final userId = _auth.currentUser?.uid;
-      if (userId == null) return [];
-
-      // Get user registrations which contain match history
-      final registrations = await _firestore
-          .collection('users')
-          .doc(userId)
-          .collection('registrations')
-          .where('status', whereIn: ['completed', 'checked-in'])
-          .orderBy('completedAt', descending: true)
-          .limit(20)
-          .get();
-
-      return registrations.docs.map((doc) {
-        final data = doc.data();
-
-        // Determine result based on position and winnings
-        String result = 'Played';
-        if (data['position'] != null && data['position'] <= 3) {
-          result = 'Won';
-        } else if (data['winnings'] != null && data['winnings'] > 0) {
-          result = 'Won';
-        }
-
-        return {
-          'id': doc.id,
-          'tournamentName': data['tournamentName'] ?? 'Unknown Tournament',
-          'gameName': data['gameName'] ?? 'Unknown Game',
-          'position': data['position'] ?? 'N/A',
-          'kills': data['kills'] ?? 0,
-          'winnings': (data['winnings'] ?? 0.0).toDouble(),
-          'result': result,
-          'date': _formatDate(data['completedAt'] ?? data['joinedAt']),
-          'entryFee': data['entryFee'] ?? 0.0,
-          'playerName': data['playerName'] ?? 'Player',
-        };
-      }).toList();
-    } catch (e) {
-      print('❌ Error getting user matches: $e');
-      return _getMockMatches(); // Fallback to mock data
-    }
-  }
-
-// Alternative: Get matches from a dedicated matches collection
-  Future<List<Map<String, dynamic>>> getUserMatchesFromMatchesCollection() async {
-    try {
-      final userId = _auth.currentUser?.uid;
-      if (userId == null) return [];
-
-      final matches = await _firestore
-          .collection('matches')
-          .where('players', arrayContains: userId)
-          .orderBy('matchDate', descending: true)
-          .limit(20)
-          .get();
-
-      return matches.docs.map((doc) {
-        final data = doc.data();
-        final playerData = _getPlayerMatchData(data, userId);
-
-        return {
-          'id': doc.id,
-          'tournamentName': data['tournamentName'] ?? 'Unknown Tournament',
-          'gameName': data['gameName'] ?? 'Unknown Game',
-          'position': playerData['position'] ?? 'N/A',
-          'kills': playerData['kills'] ?? 0,
-          'winnings': (playerData['winnings'] ?? 0.0).toDouble(),
-          'result': playerData['result'] ?? 'Played',
-          'date': _formatDate(data['matchDate']),
-          'entryFee': data['entryFee'] ?? 0.0,
-          'matchType': data['matchType'] ?? 'Tournament',
-        };
-      }).toList();
-    } catch (e) {
-      print('❌ Error getting matches from collection: $e');
-      return _getMockMatches();
-    }
-  }
-
-  Map<String, dynamic> _getPlayerMatchData(Map<String, dynamic> matchData, String userId) {
-    try {
-      final players = matchData['players'] ?? [];
-      final results = matchData['results'] ?? [];
-
-      for (var player in players) {
-        if (player['userId'] == userId) {
-          return {
-            'position': player['position'],
-            'kills': player['kills'] ?? 0,
-            'winnings': player['winnings'] ?? 0.0,
-            'result': player['position'] <= 3 ? 'Won' : 'Played',
-          };
-        }
-      }
-
-      // Fallback if player data not found
-      final playerResult = results.firstWhere(
-              (result) => result['userId'] == userId,
-          orElse: () => {'position': 'N/A', 'kills': 0, 'winnings': 0.0}
-      );
-
-      return {
-        'position': playerResult['position'] ?? 'N/A',
-        'kills': playerResult['kills'] ?? 0,
-        'winnings': playerResult['winnings'] ?? 0.0,
-        'result': (playerResult['position'] != null && playerResult['position'] <= 3) ? 'Won' : 'Played',
-      };
-    } catch (e) {
-      return {'position': 'N/A', 'kills': 0, 'winnings': 0.0, 'result': 'Played'};
-    }
-  }
-
-// Mock data for testing
-  List<Map<String, dynamic>> _getMockMatches() {
-    return [
-      {
-        'tournamentName': 'BGMI Championship Season 1',
-        'gameName': 'BGMI',
-        'position': 2,
-        'kills': 12,
-        'winnings': 1500.00,
-        'result': 'Won',
-        'date': '15/12/2023',
-        'entryFee': 50.0,
-      },
-      {
-        'tournamentName': 'Weekly BGMI Showdown',
-        'gameName': 'BGMI',
-        'position': 8,
-        'kills': 7,
-        'winnings': 0.0,
-        'result': 'Played',
-        'date': '12/12/2023',
-        'entryFee': 30.0,
-      },
-      {
-        'tournamentName': 'Free Fire Masters',
-        'gameName': 'Free Fire',
-        'position': 1,
-        'kills': 15,
-        'winnings': 2000.00,
-        'result': 'Won',
-        'date': '10/12/2023',
-        'entryFee': 25.0,
-      },
-      {
-        'tournamentName': 'COD Mobile Championship',
-        'gameName': 'COD Mobile',
-        'position': 5,
-        'kills': 18,
-        'winnings': 250.00,
-        'result': 'Played',
-        'date': '08/12/2023',
-        'entryFee': 40.0,
-      },
-      {
-        'tournamentName': 'Valorant Pro Series',
-        'gameName': 'Valorant',
-        'position': 3,
-        'kills': 25,
-        'winnings': 800.00,
-        'result': 'Won',
-        'date': '05/12/2023',
-        'entryFee': 80.0,
-      },
-    ];
-  }
-
-  // ========== SAMPLE DATA SEEDING ==========
-  Future<void> seedSampleTournaments() async {
-    try {
-      final sampleTournaments = [
-        {
-          'basicInfo': {
-            'tournamentId': 'BGMI_001',
-            'tournamentName': 'BGMI Championship Season 1',
-            'gameName': 'BGMI',
-            'gameId': 'bgmi',
-            'tournamentType': 'solo',
-            'entryFee': 50.0,
-            'prizePool': 5000.0,
-            'maxPlayers': 100,
-            'registeredPlayers': 0,
-            'status': 'upcoming',
-            'platform': 'mobile',
-            'region': 'global',
-          },
-          'schedule': {
-            'registrationStart': Timestamp.now(),
-            'registrationEnd': Timestamp.fromDate(DateTime.now().add(Duration(days: 2, hours: 5))),
-            'tournamentStart': Timestamp.fromDate(DateTime.now().add(Duration(days: 3))),
-            'estimatedDuration': 180,
-            'checkInTime': Timestamp.fromDate(DateTime.now().add(Duration(days: 3)).subtract(Duration(minutes: 30))),
-          },
-          'rules': {
-            'maxKills': 99,
-            'allowedDevices': ['mobile'],
-            'streamingRequired': false,
-            'screenshotRequired': true,
-            'specificRules': {
-              'map': 'Erangel',
-              'perspective': 'TPP',
-              'teamSize': 1,
-            },
-          },
-          'prizes': {
-            'distribution': [
-              {'rank': 1, 'prize': 2500, 'percentage': 50},
-              {'rank': 2, 'prize': 1500, 'percentage': 30},
-              {'rank': 3, 'prize': 1000, 'percentage': 20},
-            ],
-          },
-          'metadata': {
-            'createdBy': 'admin',
-            'createdAt': FieldValue.serverTimestamp(),
-            'updatedAt': FieldValue.serverTimestamp(),
-            'version': 1,
-            'featured': true,
-            'sponsored': false,
-          },
-        },
-      ];
-
-      for (final tournament in sampleTournaments) {
-        await _firestore.collection('tournaments').add(tournament);
-      }
-
-      print('✅ Sample tournaments seeded successfully');
-    } catch (e) {
-      print('❌ Error seeding sample tournaments: $e');
-    }
+  String _getGameProfileValue(Map<String, dynamic>? gameProfile, String key) {
+    if (gameProfile == null) return 'Player';
+    final value = gameProfile[key];
+    return value?.toString() ?? 'Player';
   }
 }

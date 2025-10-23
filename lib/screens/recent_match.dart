@@ -1,6 +1,7 @@
 // ===============================
 // RECENT MATCHES SCREEN
 // ===============================
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
@@ -30,11 +31,12 @@ class _RecentMatchesScreenState extends State<RecentMatchesScreen> {
     });
 
     try {
-      final matches = await _firebaseService.getUserMatches();
+      final matches = await _firebaseService.getRecentMatches();
       setState(() {
         _matches = matches;
       });
     } catch (e) {
+      print('❌ Error loading matches: $e');
       setState(() {
         _errorMessage = 'Failed to load matches: $e';
       });
@@ -104,6 +106,9 @@ class _RecentMatchesScreenState extends State<RecentMatchesScreen> {
           SizedBox(height: 20),
           ElevatedButton(
             onPressed: _loadMatches,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.deepPurple,
+            ),
             child: Text('Try Again'),
           ),
         ],
@@ -116,18 +121,25 @@ class _RecentMatchesScreenState extends State<RecentMatchesScreen> {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.sports_esports, size: 80, color: Colors.grey),
+          Icon(Icons.sports_esports, size: 80, color: Colors.grey[400]),
           SizedBox(height: 20),
           Text(
             'No matches played yet',
-            style: TextStyle(fontSize: 18, color: Colors.grey),
+            style: TextStyle(
+              fontSize: 18,
+              color: Colors.grey[600],
+              fontWeight: FontWeight.bold,
+            ),
           ),
           SizedBox(height: 10),
           Padding(
             padding: EdgeInsets.symmetric(horizontal: 40),
             child: Text(
               'Join tournaments to see your match history here',
-              style: TextStyle(color: Colors.grey),
+              style: TextStyle(
+                color: Colors.grey[500],
+                fontSize: 14,
+              ),
               textAlign: TextAlign.center,
             ),
           ),
@@ -147,6 +159,9 @@ class _RecentMatchesScreenState extends State<RecentMatchesScreen> {
   }
 
   Widget _buildMatchesList() {
+    final wonMatches = _matches.where((match) => _isWonMatch(match)).length;
+    final winRate = _matches.isNotEmpty ? (wonMatches / _matches.length * 100) : 0;
+
     return Column(
       children: [
         // Summary card
@@ -154,14 +169,15 @@ class _RecentMatchesScreenState extends State<RecentMatchesScreen> {
           padding: EdgeInsets.all(16),
           child: Card(
             color: Colors.deepPurple[50],
+            elevation: 4,
             child: Padding(
               padding: EdgeInsets.all(16),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceAround,
                 children: [
                   _buildSummaryItem('Total', _matches.length.toString()),
-                  _buildSummaryItem('Won', _matches.where((m) => m['result'] == 'Won').length.toString()),
-                  _buildSummaryItem('Win Rate', '${(_matches.where((m) => m['result'] == 'Won').length / _matches.length * 100).toStringAsFixed(1)}%'),
+                  _buildSummaryItem('Won', wonMatches.toString()),
+                  _buildSummaryItem('Win Rate', '${winRate.toStringAsFixed(1)}%'),
                 ],
               ),
             ),
@@ -170,13 +186,16 @@ class _RecentMatchesScreenState extends State<RecentMatchesScreen> {
 
         // Matches list
         Expanded(
-          child: ListView.builder(
-            padding: EdgeInsets.all(16),
-            itemCount: _matches.length,
-            itemBuilder: (context, index) {
-              final match = _matches[index];
-              return _buildMatchCard(match);
-            },
+          child: RefreshIndicator(
+            onRefresh: _loadMatches,
+            child: ListView.builder(
+              padding: EdgeInsets.all(16),
+              itemCount: _matches.length,
+              itemBuilder: (context, index) {
+                final match = _matches[index];
+                return _buildMatchCard(match);
+              },
+            ),
           ),
         ),
       ],
@@ -194,6 +213,7 @@ class _RecentMatchesScreenState extends State<RecentMatchesScreen> {
             color: Colors.deepPurple,
           ),
         ),
+        SizedBox(height: 4),
         Text(
           label,
           style: TextStyle(
@@ -206,20 +226,32 @@ class _RecentMatchesScreenState extends State<RecentMatchesScreen> {
   }
 
   Widget _buildMatchCard(Map<String, dynamic> match) {
+    final tournamentName = match['tournament_name'] as String? ?? 'Unknown Tournament';
+    final gameName = match['game_name'] as String? ?? 'Unknown Game';
+    final position = match['position'] as int? ?? 0;
+    final kills = match['kills'] as int? ?? 0;
+    final winnings = (match['winnings'] as num?)?.toDouble() ?? 0.0;
+    final timestamp = match['timestamp'] as Timestamp?;
+    final isWon = _isWonMatch(match);
+
     return Card(
       elevation: 4,
       margin: EdgeInsets.symmetric(vertical: 8),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+      ),
       child: Padding(
         padding: EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // Header row with tournament name and result badge
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Expanded(
                   child: Text(
-                    match['tournamentName'] ?? 'Unknown Tournament',
+                    tournamentName,
                     style: TextStyle(
                       fontSize: 18,
                       fontWeight: FontWeight.bold,
@@ -232,15 +264,11 @@ class _RecentMatchesScreenState extends State<RecentMatchesScreen> {
                 Container(
                   padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                   decoration: BoxDecoration(
-                    color: match['result'] == 'Won'
-                        ? Colors.green
-                        : match['result'] == 'Played'
-                        ? Colors.orange
-                        : Colors.grey,
+                    color: isWon ? Colors.green : Colors.orange,
                     borderRadius: BorderRadius.circular(20),
                   ),
                   child: Text(
-                    match['result']?.toString().toUpperCase() ?? 'PLAYED',
+                    isWon ? 'WON' : 'PLAYED',
                     style: TextStyle(
                       color: Colors.white,
                       fontWeight: FontWeight.bold,
@@ -250,36 +278,62 @@ class _RecentMatchesScreenState extends State<RecentMatchesScreen> {
                 ),
               ],
             ),
+
             SizedBox(height: 8),
+
+            // Game name
             Text(
-              'Game: ${match['gameName'] ?? 'Unknown Game'}',
-              style: TextStyle(color: Colors.grey[600]),
+              'Game: $gameName',
+              style: TextStyle(
+                color: Colors.grey[600],
+                fontSize: 14,
+              ),
             ),
+
             SizedBox(height: 12),
+
+            // Match stats
             Row(
               children: [
-                _buildMatchStat('Kills', match['kills']?.toString() ?? '0'),
-                _buildMatchStat('Position', '#${match['position']?.toString() ?? 'N/A'}'),
-                _buildMatchStat('Prize', '₹${(match['winnings'] ?? 0.0).toStringAsFixed(2)}'),
+                _buildMatchStat('Kills', kills.toString()),
+                _buildMatchStat('Position', '#$position'),
+                _buildMatchStat('Prize', '₹${winnings.toStringAsFixed(2)}'),
               ],
             ),
+
             SizedBox(height: 8),
+
+            // Footer with date
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Text(
-                  'Played on: ${match['date'] ?? 'Recently'}',
+                  _formatMatchDate(timestamp),
                   style: TextStyle(
                     fontSize: 12,
                     color: Colors.grey[500],
                   ),
                 ),
-                if (match['entryFee'] != null && match['entryFee'] > 0)
-                  Text(
-                    'Entry: ₹${match['entryFee']?.toStringAsFixed(2)}',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: Colors.grey[500],
+                if (isWon)
+                  Container(
+                    padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.green.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(Icons.emoji_events, size: 12, color: Colors.green),
+                        SizedBox(width: 4),
+                        Text(
+                          'Won ₹${winnings.toStringAsFixed(2)}',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: Colors.green,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
               ],
@@ -302,6 +356,7 @@ class _RecentMatchesScreenState extends State<RecentMatchesScreen> {
               color: Colors.deepPurple,
             ),
           ),
+          SizedBox(height: 2),
           Text(
             label,
             style: TextStyle(
@@ -312,5 +367,28 @@ class _RecentMatchesScreenState extends State<RecentMatchesScreen> {
         ],
       ),
     );
+  }
+
+  bool _isWonMatch(Map<String, dynamic> match) {
+    final position = match['position'] as int? ?? 0;
+    final winnings = (match['winnings'] as num?)?.toDouble() ?? 0.0;
+
+    // Consider it a win if position is 1-3 or winnings > 0
+    return position <= 3 || winnings > 0;
+  }
+
+  String _formatMatchDate(Timestamp? timestamp) {
+    if (timestamp == null) return 'Recently';
+
+    final date = timestamp.toDate();
+    final now = DateTime.now();
+    final difference = now.difference(date);
+
+    if (difference.inMinutes < 1) return 'Just now';
+    if (difference.inMinutes < 60) return '${difference.inMinutes}m ago';
+    if (difference.inHours < 24) return '${difference.inHours}h ago';
+    if (difference.inDays < 7) return '${difference.inDays}d ago';
+
+    return '${date.day}/${date.month}/${date.year}';
   }
 }

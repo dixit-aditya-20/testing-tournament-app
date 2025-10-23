@@ -1,4 +1,5 @@
 import 'package:dynamic_and_api/screens/login_signup_screen.dart';
+import 'package:dynamic_and_api/services/notification_service.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -7,6 +8,8 @@ import 'app.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp();
+  // Initialize notification service
+  await NotificationService().initialize();
   runApp(MyApp());
 }
 

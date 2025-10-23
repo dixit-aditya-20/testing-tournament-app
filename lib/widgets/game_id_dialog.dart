@@ -25,7 +25,8 @@ class GameIdDialog extends StatefulWidget {
 class _GameIdDialogState extends State<GameIdDialog> {
   final TextEditingController _playerNameController = TextEditingController();
   final TextEditingController _playerIdController = TextEditingController();
-  final FirebaseService _firebaseService = FirebaseService();
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final FirebaseAuth _auth = FirebaseAuth.instance;
 
   bool _isLoading = false;
   bool _hasExistingDetails = false;
@@ -35,8 +36,15 @@ class _GameIdDialogState extends State<GameIdDialog> {
   bool _showChangeRequest = false;
   Map<String, dynamic>? _existingGameDetails;
 
-  // Razorpay instance
+  // Payment variables
   late Razorpay _razorpay;
+  String _selectedPaymentMethod = 'wallet';
+  double _walletBalance = 0.0;
+  String? _userName;
+  String? _userId;
+
+  // Track payment state to prevent duplicates
+  bool _paymentInProgress = false;
 
   @override
   void initState() {
@@ -44,6 +52,7 @@ class _GameIdDialogState extends State<GameIdDialog> {
     _initializeRazorpay();
     _checkExistingData();
     _checkTournamentStatus();
+    _loadWalletBalance();
   }
 
   void _initializeRazorpay() {
@@ -55,10 +64,74 @@ class _GameIdDialogState extends State<GameIdDialog> {
 
   void _checkTournamentStatus() {
     final now = DateTime.now();
+    final registrationEnd = widget.tournament.registrationEnd.toDate();
+
     setState(() {
-      _isRegistrationClosed = now.isAfter(widget.tournament.registrationEnd);
+      _isRegistrationClosed = now.isAfter(registrationEnd);
       _isTournamentFull = widget.tournament.registeredPlayers >= widget.tournament.totalSlots;
     });
+  }
+
+  Future<void> _loadWalletBalance() async {
+    try {
+      final user = _auth.currentUser;
+      if (user != null) {
+        final userQuery = await _firestore
+            .collection('users')
+            .where('uid', isEqualTo: user.uid)
+            .limit(1)
+            .get();
+
+        if (userQuery.docs.isNotEmpty) {
+          final userDoc = userQuery.docs.first;
+          _userName = userDoc.id;
+          _userId = user.uid;
+
+          final walletDataDoc = await _firestore
+              .collection('wallet')
+              .doc('users')
+              .collection(_userName!)
+              .doc('wallet_data')
+              .get();
+
+          if (walletDataDoc.exists) {
+            final walletData = walletDataDoc.data();
+            setState(() {
+              _walletBalance = (walletData?['total_balance'] as num?)?.toDouble() ?? 0.0;
+            });
+          } else {
+            await _initializeWallet();
+          }
+        }
+      }
+    } catch (e) {
+      print('❌ Error loading wallet balance: $e');
+    }
+  }
+
+  Future<void> _initializeWallet() async {
+    try {
+      if (_userName != null && _userId != null) {
+        await _firestore
+            .collection('wallet')
+            .doc('users')
+            .collection(_userName!)
+            .doc('wallet_data')
+            .set({
+          'total_balance': 0.0,
+          'total_winning': 0.0,
+          'user_id': _userId,
+          'user_name': _userName,
+          'createdAt': FieldValue.serverTimestamp(),
+        });
+
+        setState(() {
+          _walletBalance = 0.0;
+        });
+      }
+    } catch (e) {
+      print('❌ Error initializing wallet: $e');
+    }
   }
 
   Future<void> _checkExistingData() async {
@@ -67,23 +140,56 @@ class _GameIdDialogState extends State<GameIdDialog> {
     });
 
     try {
-      // Check if user already has game profile saved
-      final existingDetails = await _firebaseService.getGameProfile(widget.gameName.toLowerCase());
+      final user = _auth.currentUser;
+      if (user != null) {
+        final userQuery = await _firestore
+            .collection('users')
+            .where('uid', isEqualTo: user.uid)
+            .limit(1)
+            .get();
 
-      // Check if user is already registered for this tournament
-      final isRegistered = await _firebaseService.hasUserRegisteredForTournament(widget.tournament.id);
+        if (userQuery.docs.isNotEmpty) {
+          final userDoc = userQuery.docs.first;
+          _userName = userDoc.id;
+          _userId = user.uid;
+          final userData = userDoc.data();
 
-      if (mounted) {
-        setState(() {
-          _isAlreadyRegistered = isRegistered;
-          _hasExistingDetails = existingDetails != null;
-          _existingGameDetails = existingDetails;
+          final tournaments = userData['tournaments'] as Map<String, dynamic>? ?? {};
+          final gameKey = _getGameKey(widget.gameName);
 
-          if (_hasExistingDetails) {
-            _playerNameController.text = existingDetails!['playerName'] ?? '';
-            _playerIdController.text = existingDetails['playerId'] ?? '';
+          if (tournaments.containsKey(gameKey)) {
+            final gameDetails = tournaments[gameKey] as Map<String, dynamic>? ?? {};
+            final nameField = '${widget.gameName.toUpperCase()}_NAME';
+            final idField = '${widget.gameName.toUpperCase()}_ID';
+
+            final playerName = gameDetails[nameField];
+            final playerId = gameDetails[idField];
+
+            if (playerName != null && playerName.isNotEmpty &&
+                playerId != null && playerId.isNotEmpty) {
+              setState(() {
+                _hasExistingDetails = true;
+                _existingGameDetails = {
+                  'playerName': playerName,
+                  'playerId': playerId,
+                };
+                _playerNameController.text = playerName;
+                _playerIdController.text = playerId;
+              });
+            }
           }
-        });
+
+          final registrationQuery = await _firestore
+              .collection('tournament_registrations')
+              .where('userId', isEqualTo: user.uid)
+              .where('tournamentId', isEqualTo: widget.tournament.id)
+              .limit(1)
+              .get();
+
+          setState(() {
+            _isAlreadyRegistered = registrationQuery.docs.isNotEmpty;
+          });
+        }
       }
     } catch (e) {
       print('❌ Error checking existing data: $e');
@@ -93,6 +199,21 @@ class _GameIdDialogState extends State<GameIdDialog> {
           _isLoading = false;
         });
       }
+    }
+  }
+
+  String _getGameKey(String gameName) {
+    switch (gameName.toUpperCase()) {
+      case 'BGMI':
+        return 'BGMI';
+      case 'FREE FIRE':
+        return 'FREEFIRE';
+      case 'VALORANT':
+        return 'VALORANT';
+      case 'COD MOBILE':
+        return 'COD_MOBILE';
+      default:
+        return gameName.toUpperCase().replaceAll(' ', '_');
     }
   }
 
@@ -136,7 +257,13 @@ class _GameIdDialogState extends State<GameIdDialog> {
         ],
       );
     } else {
-      return Text('Enter ${widget.gameName} Details');
+      return Text(
+        _hasExistingDetails ? 'Save & Pay' : 'Enter ${widget.gameName} Details',
+        style: TextStyle(
+          fontWeight: FontWeight.bold,
+          color: Colors.deepPurple,
+        ),
+      );
     }
   }
 
@@ -213,7 +340,7 @@ class _GameIdDialogState extends State<GameIdDialog> {
       SizedBox(height: 20),
       ElevatedButton.icon(
         onPressed: () {
-          Navigator.pop(context); // Close the dialog
+          Navigator.pop(context);
           Navigator.push(
             context,
             MaterialPageRoute(
@@ -315,7 +442,6 @@ class _GameIdDialogState extends State<GameIdDialog> {
       _buildTournamentInfo(),
       SizedBox(height: 20),
 
-      // Player Name Field
       TextField(
         controller: _playerNameController,
         enabled: !_hasExistingDetails || _showChangeRequest,
@@ -332,12 +458,11 @@ class _GameIdDialogState extends State<GameIdDialog> {
       ),
       SizedBox(height: 16),
 
-      // Game ID Field
       TextField(
         controller: _playerIdController,
         enabled: !_hasExistingDetails || _showChangeRequest,
         decoration: InputDecoration(
-          labelText: 'Game ID',
+          labelText: '${widget.gameName} ID',
           border: OutlineInputBorder(),
           hintText: 'Enter your game ID/username',
           prefixIcon: Icon(Icons.videogame_asset),
@@ -348,7 +473,11 @@ class _GameIdDialogState extends State<GameIdDialog> {
         readOnly: _hasExistingDetails && !_showChangeRequest,
       ),
 
-      // Change Request Button (only show when fields are locked)
+      if (!_showChangeRequest) ...[
+        SizedBox(height: 20),
+        _buildPaymentOptions(),
+      ],
+
       if (_hasExistingDetails && !_showChangeRequest) ...[
         SizedBox(height: 16),
         OutlinedButton.icon(
@@ -368,7 +497,6 @@ class _GameIdDialogState extends State<GameIdDialog> {
         ),
       ],
 
-      // Warning Note
       SizedBox(height: 16),
       _buildWarningNote(),
 
@@ -379,6 +507,138 @@ class _GameIdDialogState extends State<GameIdDialog> {
         Text('Processing...', style: TextStyle(color: Colors.grey)),
       ],
     ];
+  }
+
+  Widget _buildPaymentOptions() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Payment Method',
+          style: TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.bold,
+            color: Colors.deepPurple,
+          ),
+        ),
+        SizedBox(height: 12),
+        _buildPaymentOption(
+          value: 'wallet',
+          title: 'Wallet Balance',
+          subtitle: 'Use your available wallet balance',
+          icon: Icons.account_balance_wallet,
+          balance: _walletBalance,
+        ),
+        SizedBox(height: 8),
+        _buildPaymentOption(
+          value: 'razorpay',
+          title: 'Razorpay UPI/Cards',
+          subtitle: 'Pay using UPI, Credit/Debit Cards',
+          icon: Icons.credit_card,
+        ),
+        SizedBox(height: 8),
+        _buildPaymentOption(
+          value: 'paytm',
+          title: 'PayTM',
+          subtitle: 'Pay using PayTM Wallet or UPI',
+          icon: Icons.payment,
+        ),
+        SizedBox(height: 8),
+        _buildPaymentOption(
+          value: 'phonepe',
+          title: 'PhonePe',
+          subtitle: 'Pay using PhonePe UPI',
+          icon: Icons.phone_android,
+        ),
+      ],
+    );
+  }
+
+  Widget _buildPaymentOption({
+    required String value,
+    required String title,
+    required String subtitle,
+    required IconData icon,
+    double? balance,
+  }) {
+    final isSelected = _selectedPaymentMethod == value;
+    final isWallet = value == 'wallet';
+    final hasSufficientBalance = isWallet ? (_walletBalance >= widget.tournament.entryFee) : true;
+
+    return Container(
+      decoration: BoxDecoration(
+        border: Border.all(
+          color: isSelected ? Colors.deepPurple : Colors.grey[300]!,
+          width: isSelected ? 2 : 1,
+        ),
+        borderRadius: BorderRadius.circular(8),
+        color: isSelected ? Colors.deepPurple.withOpacity(0.05) : Colors.transparent,
+      ),
+      child: RadioListTile<String>(
+        value: value,
+        groupValue: _selectedPaymentMethod,
+        onChanged: (String? newValue) {
+          if (newValue != null) {
+            setState(() {
+              _selectedPaymentMethod = newValue;
+            });
+          }
+        },
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(icon, size: 20, color: isSelected ? Colors.deepPurple : Colors.grey[700]),
+                SizedBox(width: 8),
+                Text(
+                  title,
+                  style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    color: isSelected ? Colors.deepPurple : Colors.grey[800],
+                  ),
+                ),
+              ],
+            ),
+            if (isWallet && balance != null) ...[
+              SizedBox(height: 4),
+              Text(
+                'Balance: ₹${balance.toStringAsFixed(2)}',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: hasSufficientBalance ? Colors.green : Colors.red,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ],
+        ),
+        subtitle: Text(
+          subtitle,
+          style: TextStyle(fontSize: 12),
+        ),
+        secondary: isWallet && !hasSufficientBalance
+            ? Container(
+          padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: Colors.orange[50],
+            borderRadius: BorderRadius.circular(4),
+            border: Border.all(color: Colors.orange),
+          ),
+          child: Text(
+            'Low Balance',
+            style: TextStyle(
+              fontSize: 10,
+              color: Colors.orange[800],
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        )
+            : null,
+        controlAffinity: ListTileControlAffinity.trailing,
+        contentPadding: EdgeInsets.symmetric(horizontal: 8),
+      ),
+    );
   }
 
   Widget _buildWarningNote() {
@@ -446,7 +706,7 @@ class _GameIdDialogState extends State<GameIdDialog> {
             children: [
               Text('Registration Ends:', style: TextStyle(fontWeight: FontWeight.bold)),
               Text(
-                _formatDate(widget.tournament.registrationEnd),
+                _formatDate(widget.tournament.registrationEnd.toDate()),
                 style: TextStyle(color: Colors.grey[600]),
               ),
             ],
@@ -457,7 +717,7 @@ class _GameIdDialogState extends State<GameIdDialog> {
             children: [
               Text('Prize Pool:', style: TextStyle(fontWeight: FontWeight.bold)),
               Text(
-                '₹${widget.tournament.prizePool}',
+                '₹${widget.tournament.winningPrize}',
                 style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold),
               ),
             ],
@@ -577,24 +837,27 @@ class _GameIdDialogState extends State<GameIdDialog> {
     } else if (_hasExistingDetails) {
       return 'PAY NOW';
     } else {
-      return 'SAVE & PAY';
+      return 'PAY NOW';
     }
   }
 
   void _onConfirmPressed() {
+    if (_paymentInProgress) {
+      print('⚠️ Payment already in progress, ignoring duplicate click');
+      return;
+    }
+
     final playerName = _playerNameController.text.trim();
     final playerId = _playerIdController.text.trim();
 
     print('🔍 Validating inputs: Name="$playerName", ID="$playerId"');
 
     if (playerName.isEmpty) {
-      print('⚠️ Player name is empty');
       _showError('Please enter your player name');
       return;
     }
 
     if (playerId.isEmpty) {
-      print('⚠️ Game ID is empty');
       _showError('Please enter your game ID');
       return;
     }
@@ -609,10 +872,15 @@ class _GameIdDialogState extends State<GameIdDialog> {
       return;
     }
 
-    print('✅ Inputs valid, proceeding with registration');
+    if (_selectedPaymentMethod == 'wallet' && _walletBalance < widget.tournament.entryFee) {
+      _showError('Insufficient wallet balance. Please choose another payment method.');
+      return;
+    }
 
+    print('✅ Inputs valid, proceeding with registration');
     setState(() {
       _isLoading = true;
+      _paymentInProgress = true;
     });
 
     if (_showChangeRequest) {
@@ -624,105 +892,215 @@ class _GameIdDialogState extends State<GameIdDialog> {
 
   void _submitChangeRequest(String playerName, String playerId) async {
     try {
-      final userId = FirebaseAuth.instance.currentUser!.uid;
-      await FirebaseFirestore.instance.collection('change_requests').add({
-        'userId': userId,
-        'gameName': widget.gameName,
-        'oldPlayerName': _existingGameDetails!['playerName'],
-        'oldPlayerId': _existingGameDetails!['playerId'],
-        'newPlayerName': playerName,
-        'newPlayerId': playerId,
-        'status': 'pending',
-        'requestedAt': FieldValue.serverTimestamp(),
-        'estimatedCompletion': DateTime.now().add(Duration(days: 4)),
-      });
+      final user = _auth.currentUser;
+      if (user != null) {
+        final userQuery = await _firestore
+            .collection('users')
+            .where('uid', isEqualTo: user.uid)
+            .limit(1)
+            .get();
 
-      // Update game profile with new details
-      await _firebaseService.saveUserGameProfile(
-        gameId: widget.gameName.toLowerCase(),
-        gameName: widget.gameName,
-        playerName: playerName,
-        playerId: playerId,
-      );
+        if (userQuery.docs.isNotEmpty) {
+          final userDoc = userQuery.docs.first;
+          final userName = userDoc.id;
 
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Change request submitted successfully!'),
-            backgroundColor: Colors.orange,
-            duration: Duration(seconds: 3),
-          ),
-        );
+          await _firestore.collection('change_requests').add({
+            'userId': user.uid,
+            'userName': userName,
+            'gameName': widget.gameName,
+            'oldPlayerName': _existingGameDetails!['playerName'],
+            'oldPlayerId': _existingGameDetails!['playerId'],
+            'newPlayerName': playerName,
+            'newPlayerId': playerId,
+            'status': 'pending',
+            'requestedAt': FieldValue.serverTimestamp(),
+            'estimatedCompletion': DateTime.now().add(Duration(days: 4)),
+          });
 
-        Navigator.pop(context);
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Change request submitted successfully!'),
+                backgroundColor: Colors.orange,
+                duration: Duration(seconds: 3),
+              ),
+            );
+
+            Navigator.pop(context);
+          }
+        }
       }
     } catch (e) {
       print('❌ Error submitting change request: $e');
       _showError('Failed to submit change request. Please try again.');
       setState(() {
         _isLoading = false;
+        _paymentInProgress = false;
       });
     }
   }
 
   void _processRegistration(String playerName, String playerId) {
-    if (!_hasExistingDetails) {
-      _saveUserGameProfile(playerName, playerId).then((success) {
-        if (success) {
-          _tryWalletPayment(playerName, playerId);
-        } else {
-          setState(() {
-            _isLoading = false;
-          });
-          _showError('Failed to save your details. Please try again.');
-        }
-      });
-    } else {
-      _tryWalletPayment(playerName, playerId);
+    _saveUserGameDetails(playerName, playerId).then((success) {
+      if (success) {
+        _processPayment(playerName, playerId);
+      } else {
+        setState(() {
+          _isLoading = false;
+          _paymentInProgress = false;
+        });
+        _showError('Failed to save your details. Please try again.');
+      }
+    });
+  }
+
+  void _processPayment(String playerName, String playerId) {
+    switch (_selectedPaymentMethod) {
+      case 'wallet':
+        _processWalletPayment(playerName, playerId);
+        break;
+      case 'razorpay':
+        _openRazorpayPayment(playerName, playerId);
+        break;
+      case 'paytm':
+      case 'phonepe':
+        _processUpiPayment(playerName, playerId);
+        break;
+      default:
+        _openRazorpayPayment(playerName, playerId);
     }
   }
 
-  Future<bool> _saveUserGameProfile(String playerName, String playerId) async {
+  Future<bool> _saveUserGameDetails(String playerName, String playerId) async {
     try {
-      final success = await _firebaseService.saveUserGameProfile(
-        gameId: widget.gameName.toLowerCase(),
-        gameName: widget.gameName,
-        playerName: playerName,
-        playerId: playerId,
-      );
+      final user = _auth.currentUser;
+      if (user != null) {
+        final userQuery = await _firestore
+            .collection('users')
+            .where('uid', isEqualTo: user.uid)
+            .limit(1)
+            .get();
 
-      if (success) {
-        print('✅ User game profile saved successfully');
-        return true;
-      } else {
-        print('❌ Failed to save user game profile');
-        return false;
+        if (userQuery.docs.isNotEmpty) {
+          final userDoc = userQuery.docs.first;
+          final userName = userDoc.id;
+
+          final gameKey = _getGameKey(widget.gameName);
+          final nameField = '${widget.gameName.toUpperCase()}_NAME';
+          final idField = '${widget.gameName.toUpperCase()}_ID';
+
+          await _firestore.collection('users').doc(userName).update({
+            'tournaments.$gameKey.$nameField': playerName,
+            'tournaments.$gameKey.$idField': playerId,
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+
+          print('✅ User game details saved successfully');
+          return true;
+        }
       }
+      return false;
     } catch (e) {
-      print('❌ Error saving user game profile: $e');
+      print('❌ Error saving user game details: $e');
       return false;
     }
   }
 
-  void _tryWalletPayment(String playerName, String playerId) async {
-    print('💰 Trying wallet payment...');
+  void _processWalletPayment(String playerName, String playerId) async {
+    print('💰 Processing wallet payment...');
 
-    final success = await _firebaseService.deductFromWallet(widget.tournament.entryFee);
+    try {
+      final user = _auth.currentUser;
+      if (user != null && _userName != null) {
+        final walletDataDoc = await _firestore
+            .collection('wallet')
+            .doc('users')
+            .collection(_userName!)
+            .doc('wallet_data')
+            .get();
 
-    if (success) {
-      print('✅ Wallet payment successful');
-      _completeRegistration(playerName, playerId, 'wallet_${DateTime.now().millisecondsSinceEpoch}');
-    } else {
-      print('❌ Insufficient wallet balance, opening Razorpay');
-      _openRazorpayPayment(playerName, playerId);
+        if (walletDataDoc.exists) {
+          final walletData = walletDataDoc.data();
+          final currentBalance = (walletData?['total_balance'] as num?)?.toDouble() ?? 0.0;
+
+          if (currentBalance < widget.tournament.entryFee) {
+            _showError('Insufficient wallet balance. Please choose another payment method.');
+            setState(() {
+              _isLoading = false;
+              _paymentInProgress = false;
+            });
+            return;
+          }
+
+          final batch = _firestore.batch();
+
+          final walletDataRef = _firestore
+              .collection('wallet')
+              .doc('users')
+              .collection(_userName!)
+              .doc('wallet_data');
+          batch.update(walletDataRef, {
+            'total_balance': FieldValue.increment(-widget.tournament.entryFee),
+          });
+
+          final transactionRef = _firestore
+              .collection('wallet')
+              .doc('users')
+              .collection(_userName!)
+              .doc('transactions')
+              .collection('successful')
+              .doc();
+
+          batch.set(transactionRef, {
+            'amount': widget.tournament.entryFee,
+            'type': 'debit',
+            'description': 'Tournament Registration - ${widget.tournament.tournamentName}',
+            'tournamentId': widget.tournament.id,
+            'tournamentName': widget.tournament.tournamentName,
+            'gameName': widget.tournament.gameName,
+            'playerName': playerName,
+            'playerId': playerId,
+            'timestamp': FieldValue.serverTimestamp(),
+            'status': 'completed',
+            'paymentMethod': 'wallet',
+          });
+
+          await batch.commit();
+
+          setState(() {
+            _walletBalance = currentBalance - widget.tournament.entryFee;
+          });
+
+          print('✅ Wallet payment successful');
+          _completeRegistration(playerName, playerId, 'wallet_${DateTime.now().millisecondsSinceEpoch}');
+        } else {
+          _showError('Wallet not found. Please try another payment method.');
+          setState(() {
+            _isLoading = false;
+            _paymentInProgress = false;
+          });
+        }
+      }
+    } catch (e) {
+      print('❌ Error processing wallet payment: $e');
+      _showError('Wallet payment failed. Please try another payment method.');
+      setState(() {
+        _isLoading = false;
+        _paymentInProgress = false;
+      });
     }
+  }
+
+  void _processUpiPayment(String playerName, String playerId) {
+    print('📱 Processing ${_selectedPaymentMethod.toUpperCase()} payment...');
+    _openRazorpayPayment(playerName, playerId);
   }
 
   void _openRazorpayPayment(String playerName, String playerId) {
     print('💳 Opening Razorpay payment gateway...');
 
     try {
-      final user = FirebaseAuth.instance.currentUser;
+      final user = _auth.currentUser;
 
       var options = {
         'key': 'rzp_test_1DP5mmOlF5G5ag',
@@ -735,17 +1113,20 @@ class _GameIdDialogState extends State<GameIdDialog> {
           'email': user?.email ?? 'user@example.com',
           'name': playerName,
         },
-        'external': {
-          'wallets': ['paytm', 'phonepe', 'gpay']
-        },
         'theme': {
           'color': '#6A0DAD'
         }
       };
 
+      if (_selectedPaymentMethod == 'paytm' || _selectedPaymentMethod == 'phonepe') {
+        options['external'] = {
+          'wallets': _selectedPaymentMethod == 'paytm' ? ['paytm'] : ['phonepe']
+        };
+      }
+
       print('💰 Razorpay options: $options');
 
-      // Clear and reinitialize to avoid multiple listeners
+      // Clear and reinitialize to prevent duplicate listeners
       _razorpay.clear();
       _initializeRazorpay();
 
@@ -758,77 +1139,188 @@ class _GameIdDialogState extends State<GameIdDialog> {
       if (mounted) {
         setState(() {
           _isLoading = false;
+          _paymentInProgress = false;
         });
       }
     }
   }
 
   void _handlePaymentSuccess(PaymentSuccessResponse response) {
+    print('🔄 Payment Success Handler Started');
     print('✅ Payment Success: ${response.paymentId}');
+
+    // IMPORTANT: Clear Razorpay immediately
+    _razorpay.clear();
 
     final playerName = _playerNameController.text.trim();
     final playerId = _playerIdController.text.trim();
 
-    _completeRegistration(playerName, playerId, response.paymentId!);
+    // Store payment record and complete registration
+    _storeRazorpayPaymentRecord(response, playerName, playerId);
+    print('🔄 Payment Success Handler Completed');
+  }
+
+  Future<void> _storeRazorpayPaymentRecord(
+      PaymentSuccessResponse response, String playerName, String playerId) async {
+    try {
+      if (_userName != null) {
+        final razorpayDocRef = _firestore
+            .collection('wallet')
+            .doc('users')
+            .collection(_userName!)
+            .doc('transactions')
+            .collection('successful')
+            .doc(response.paymentId);
+
+        await razorpayDocRef.set({
+          'paymentId': response.paymentId,
+          'orderId': response.orderId,
+          'signature': response.signature,
+          'amount': widget.tournament.entryFee,
+          'type': 'debit',
+          'description': 'Tournament Registration - ${widget.tournament.tournamentName}',
+          'tournamentId': widget.tournament.id,
+          'tournamentName': widget.tournament.tournamentName,
+          'gameName': widget.tournament.gameName,
+          'playerName': playerName,
+          'playerId': playerId,
+          'paymentMethod': _selectedPaymentMethod,
+          'timestamp': FieldValue.serverTimestamp(),
+          'status': 'completed',
+        });
+
+        _completeRegistration(playerName, playerId, response.paymentId!);
+      }
+    } catch (e) {
+      print('❌ Error storing payment record: $e');
+      _showError('Payment successful but failed to save record. Please contact support.');
+      setState(() {
+        _isLoading = false;
+        _paymentInProgress = false;
+      });
+    }
   }
 
   void _handlePaymentError(PaymentFailureResponse response) {
     print('❌ Payment Error: ${response.code} - ${response.message}');
+
+    // IMPORTANT: Clear Razorpay on error too
+    _razorpay.clear();
+
+    if (_userName != null) {
+      _storeFailedPaymentRecord(response);
+    }
+
     _showError('Payment failed: ${response.message ?? "Unknown error"}');
 
     if (mounted) {
       setState(() {
         _isLoading = false;
+        _paymentInProgress = false;
       });
+    }
+  }
+
+  Future<void> _storeFailedPaymentRecord(PaymentFailureResponse response) async {
+    try {
+      final playerName = _playerNameController.text.trim();
+      final playerId = _playerIdController.text.trim();
+
+      final failedDocRef = _firestore
+          .collection('wallet')
+          .doc('users')
+          .collection(_userName!)
+          .doc('transactions')
+          .collection('failed')
+          .doc();
+
+      await failedDocRef.set({
+        'error_code': response.code,
+        'error_message': response.message,
+        'amount': widget.tournament.entryFee,
+        'description': 'Failed Tournament Registration - ${widget.tournament.tournamentName}',
+        'tournamentId': widget.tournament.id,
+        'tournamentName': widget.tournament.tournamentName,
+        'gameName': widget.tournament.gameName,
+        'playerName': playerName,
+        'playerId': playerId,
+        'paymentMethod': _selectedPaymentMethod,
+        'timestamp': FieldValue.serverTimestamp(),
+        'status': 'failed',
+      });
+    } catch (e) {
+      print('❌ Error storing failed payment record: $e');
     }
   }
 
   void _handleExternalWallet(ExternalWalletResponse response) {
     print('👛 External Wallet: ${response.walletName}');
+
+    // Clear Razorpay for external wallet too
+    _razorpay.clear();
   }
 
   void _completeRegistration(String playerName, String playerId, String paymentId) async {
     print('💰 Processing successful payment...');
 
     try {
-      final success = await _firebaseService.registerForTournament(
-        tournament: widget.tournament,
-        playerName: playerName,
-        playerId: playerId,
-        paymentId: paymentId,
-        paymentMethod: paymentId.startsWith('wallet_') ? 'wallet' : 'razorpay',
-      );
+      final user = _auth.currentUser;
+      if (user != null && _userName != null) {
+        final batch = _firestore.batch();
 
-      if (success) {
+        final registrationRef = _firestore.collection('tournament_registrations').doc();
+        batch.set(registrationRef, {
+          'userId': user.uid,
+          'userName': _userName,
+          'tournamentId': widget.tournament.id,
+          'tournamentName': widget.tournament.tournamentName,
+          'gameName': widget.tournament.gameName,
+          'playerName': playerName,
+          'playerId': playerId,
+          'entryFee': widget.tournament.entryFee,
+          'paymentId': paymentId,
+          'paymentMethod': _selectedPaymentMethod,
+          'registeredAt': FieldValue.serverTimestamp(),
+          'status': 'registered',
+        });
+
+        final tournamentRef = _firestore.collection('tournaments').doc(widget.tournament.id);
+        batch.update(tournamentRef, {
+          'registered_players': FieldValue.increment(1),
+          'updated_at': FieldValue.serverTimestamp(),
+        });
+
+        await batch.commit();
+
         print('🎉 Tournament registration saved successfully!');
 
+        // IMPORTANT: Close the dialog FIRST before showing any messages
         if (mounted) {
+          Navigator.pop(context); // Close the dialog first
+
+          // Then show success message
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('Success! You are now registered for ${widget.tournament.tournamentName}'),
+              content: Text('🎉 Success! You are now registered for ${widget.tournament.tournamentName}'),
               backgroundColor: Colors.green,
               duration: Duration(seconds: 3),
             ),
           );
 
-          // Call the onConfirm callback
+          // Call the onConfirm callback AFTER dialog is closed
           widget.onConfirm(playerName, playerId);
-
-          // Close dialog
-          Navigator.pop(context);
         }
-
-      } else {
-        throw Exception('Failed to save tournament registration');
       }
     } catch (e) {
       print('❌ Error processing payment success: $e');
 
       if (mounted) {
-        _showError('Payment successful but registration failed. Please contact support.');
         setState(() {
           _isLoading = false;
+          _paymentInProgress = false;
         });
+
+        _showError('Payment successful but registration failed. Please contact support with payment ID: $paymentId');
       }
     }
   }

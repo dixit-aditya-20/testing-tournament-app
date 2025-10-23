@@ -2,10 +2,12 @@
 // WELCOME & SIGNUP SCREEN
 // ===============================
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import '../main.dart';
 import '../services/firebase_service.dart';
+import '../services/fmc_services.dart';
 
 class WelcomeScreen extends StatefulWidget {
   @override
@@ -14,6 +16,8 @@ class WelcomeScreen extends StatefulWidget {
 
 class _WelcomeScreenState extends State<WelcomeScreen> {
   final FirebaseService _firebaseService = FirebaseService();
+  final FCMService _fcmService = FCMService();
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final _nameController = TextEditingController();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
@@ -22,8 +26,10 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
   bool _isLogin = true;
 
   Future<void> _signUp() async {
-    if (_nameController.text.isEmpty || _emailController.text.isEmpty ||
-        _passwordController.text.isEmpty || _phoneController.text.isEmpty) {
+    if (_nameController.text.isEmpty ||
+        _emailController.text.isEmpty ||
+        _passwordController.text.isEmpty ||
+        _phoneController.text.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Please fill all fields')),
       );
@@ -35,21 +41,67 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
     });
 
     try {
-      final userCredential = await FirebaseAuth.instance.createUserWithEmailAndPassword(
+      // 1. Create user in Firebase Auth
+      final userCredential = await FirebaseAuth.instance
+          .createUserWithEmailAndPassword(
         email: _emailController.text.trim(),
         password: _passwordController.text.trim(),
       );
 
+      final User? user = userCredential.user;
 
+      if (user != null) {
+        // 2. Get FCM token
+        String? fcmToken = await _fcmService.initializeFCM();
+        List<String> fcmTokens = [];
+        if (fcmToken != null) {
+          fcmTokens.add(fcmToken);
+        }
 
+        if (user != null) {
+          // 3. Save user data to Firestore with name as document ID
+          final userName = _nameController.text.trim();
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Account created successfully! ₹200 welcome bonus added.'),
-          backgroundColor: Colors.green,
-        ),
-      );
+          await _firestore.collection('users').doc(userName).set({
+            'uid': user.uid,
+            'name': userName,
+            'email': _emailController.text.trim(),
+            'phone': _phoneController.text.trim(),
+            'welcome_bonus': 200.0,
+            'role': 'user', // Default role
+            'fmcToken': fcmToken ?? '',
+            'tournaments': {
+              'BGMI': {'BGMI_NAME': '', 'BGMI_ID': ''},
+              'FREEFIRE': {'FREEFIRE_NAME': '', 'FREEFIRE_ID': ''},
+              'VALORANT': {'VALORANT_NAME': '', 'VALORANT_ID': ''},
+              'COD_MOBILE': {'COD_MOBILE_NAME': '', 'COD_MOBILE_ID': ''},
+            },
+            'tournament_registrations': [],
+            'matches': {
+              'recent_match': [],
+              'won_match': [],
+              'loss_match': [],
+            },
+            'user_all_match_details': [],
+            'user_won_match_details': [],
+            'user_loss_match_details': [],
+            'createdAt': FieldValue.serverTimestamp(),
+            'updatedAt': FieldValue.serverTimestamp(),
+            'last_login': FieldValue.serverTimestamp(),
+          });
 
+          // 4. Create wallet structure for the user
+          await _createUserWalletStructure(userName, user.uid);
+
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                  'Account created successfully! ₹200 welcome bonus added.'),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
+      }
     } on FirebaseAuthException catch (e) {
       String message = 'Sign up failed';
       if (e.code == 'email-already-in-use') {
@@ -70,6 +122,54 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
     setState(() {
       _isLoading = false;
     });
+  }
+
+  Future<void> _createUserWalletStructure(String userName, String userId) async {
+    try {
+      // Create wallet document in the correct structure
+      await _firestore
+          .collection('wallet')
+          .doc('users')
+          .collection(userName)
+          .doc('wallet_data')
+          .set({
+        'total_balance': 200.0, // Welcome bonus
+        'total_winning': 0.0,
+        'user_id': userId,
+        'user_name': userName,
+        'createdAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+
+      // Initialize transactions document
+      await _firestore
+          .collection('wallet')
+          .doc('users')
+          .collection(userName)
+          .doc('transactions')
+          .set({
+        'successful': [],
+        'failed': [],
+        'pending': [],
+      });
+
+      // Initialize withdrawal_requests document
+      await _firestore
+          .collection('wallet')
+          .doc('users')
+          .collection(userName)
+          .doc('withdrawal_requests')
+          .set({
+        'approved': [],
+        'denied': [],
+        'failed': [],
+        'pending': [],
+      });
+
+      print('✅ New wallet structure created for: $userName');
+    } catch (e) {
+      print('❌ Error creating wallet structure: $e');
+    }
   }
 
   Future<void> _login() async {
