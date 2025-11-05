@@ -1,5 +1,5 @@
 // ===============================
-// NOTIFICATIONS SCREEN WITH PERSISTENT READ/DELETE STATUS
+// PROFESSIONAL NOTIFICATIONS SCREEN
 // ===============================
 import 'dart:convert';
 
@@ -29,6 +29,11 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   // Store both deleted IDs and read status persistently
   final List<String> _deletedNotificationIds = [];
   final Map<String, bool> _readNotificationStatus = {};
+
+  // Animation and UI constants
+  final Color _primaryColor = Colors.deepPurple;
+  final Color _backgroundColor = Color(0xFFF8F9FA);
+  final Duration _animationDuration = Duration(milliseconds: 300);
 
   @override
   void initState() {
@@ -87,7 +92,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     }
   }
 
-  // NEW: Save read status to Firestore for cross-device sync
+  // Save read status to Firestore for cross-device sync
   Future<void> _saveReadStatusToFirestore(String notificationId) async {
     try {
       final userId = _auth.currentUser?.uid;
@@ -173,9 +178,16 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     // Show local notification
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(message.notification?.title ?? 'New Notification'),
-        backgroundColor: Colors.deepPurple,
+        content: Row(
+          children: [
+            Icon(Icons.notifications_active, color: Colors.white, size: 20),
+            SizedBox(width: 8),
+            Expanded(child: Text(message.notification?.title ?? 'New Notification')),
+          ],
+        ),
+        backgroundColor: _primaryColor,
         behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       ),
     );
 
@@ -217,6 +229,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         SnackBar(
           content: Text('Opening tournament: $tournamentId'),
           backgroundColor: Colors.green,
+          behavior: SnackBarBehavior.floating,
         ),
       );
     }
@@ -276,7 +289,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       // 7. Load notifications from user's notifications collection
       await _loadUserNotifications(userName, allNotifications);
 
-      // FIXED: Apply persistent read status and filter deleted notifications
+      // Apply persistent read status and filter deleted notifications
       final List<Map<String, dynamic>> processedNotifications = [];
 
       for (var notification in allNotifications) {
@@ -321,7 +334,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     }
   }
 
-  // FIXED: Better timestamp handling
+  // Better timestamp handling
   Timestamp _safeGetTimestamp(dynamic timestamp) {
     if (timestamp == null) return Timestamp.now();
     if (timestamp is Timestamp) return timestamp;
@@ -780,7 +793,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     return 'th';
   }
 
-  // FIXED: Mark as read with persistent storage
+  // Mark as read with persistent storage
   Future<void> _markAsRead(String notificationId) async {
     try {
       // Update local state
@@ -808,7 +821,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     }
   }
 
-  // FIXED: Mark all as read with persistent storage
+  // Mark all as read with persistent storage
   Future<void> _markAllAsRead() async {
     try {
       setState(() {
@@ -829,8 +842,16 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('All notifications marked as read'),
+          content: Row(
+            children: [
+              Icon(Icons.check_circle, color: Colors.white, size: 20),
+              SizedBox(width: 8),
+              Text('All notifications marked as read'),
+            ],
+          ),
           backgroundColor: Colors.green,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         ),
       );
     } catch (e) {
@@ -838,7 +859,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     }
   }
 
-  // FIXED: Delete notification with persistent storage
+  // Delete notification with persistent storage
   Future<void> _deleteNotification(String notificationId) async {
     try {
       // Save to persistent storage before deleting
@@ -851,8 +872,16 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Notification deleted'),
+          content: Row(
+            children: [
+              Icon(Icons.delete, color: Colors.white, size: 20),
+              SizedBox(width: 8),
+              Text('Notification deleted'),
+            ],
+          ),
           backgroundColor: Colors.green,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         ),
       );
     } catch (e) {
@@ -934,140 +963,287 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   void _showRoomCredentialsDialog(Map<String, dynamic> notification) {
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text('🎮 Room Credentials'),
-        content: SingleChildScrollView(
+      builder: (context) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        child: Padding(
+          padding: EdgeInsets.all(20),
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              Row(
+                children: [
+                  Container(
+                    padding: EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Colors.blue.withOpacity(0.1),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(Icons.videogame_asset, color: Colors.blue, size: 24),
+                  ),
+                  SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      'Room Credentials',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              SizedBox(height: 16),
               Text(
                 notification['tournamentName'] ?? 'Tournament',
                 style: TextStyle(
-                  fontWeight: FontWeight.bold,
+                  fontWeight: FontWeight.w600,
                   fontSize: 16,
                 ),
               ),
-              SizedBox(height: 16),
-              Text('Room ID:', style: TextStyle(fontWeight: FontWeight.bold)),
-              SelectableText(
-                notification['roomId']?.toString() ?? 'Not available',
-                style: TextStyle(
-                  fontSize: 16,
-                  color: Colors.blue,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
+              SizedBox(height: 20),
+              _buildCredentialField('Room ID', notification['roomId']?.toString() ?? 'Not available', Colors.blue),
               SizedBox(height: 12),
-              Text('Password:', style: TextStyle(fontWeight: FontWeight.bold)),
-              SelectableText(
-                notification['roomPassword']?.toString() ?? 'Not available',
-                style: TextStyle(
-                  fontSize: 16,
-                  color: Colors.red,
-                  fontWeight: FontWeight.w500,
+              _buildCredentialField('Password', notification['roomPassword']?.toString() ?? 'Not available', Colors.red),
+              SizedBox(height: 16),
+              Container(
+                padding: EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.orange.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.orange.withOpacity(0.3)),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.warning_amber, color: Colors.orange, size: 16),
+                    SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Join immediately as credentials may expire soon!',
+                        style: TextStyle(
+                          color: Colors.orange.shade800,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
-              SizedBox(height: 16),
-              Text(
-                '⚠️ Join immediately as credentials may expire soon!',
-                style: TextStyle(
-                  color: Colors.orange,
-                  fontSize: 12,
-                ),
+              SizedBox(height: 20),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.pop(context),
+                      style: OutlinedButton.styleFrom(
+                        padding: EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                      child: Text('CLOSE'),
+                    ),
+                  ),
+                  SizedBox(width: 12),
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: () {
+                        // Copy to clipboard functionality would go here
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Row(
+                              children: [
+                                Icon(Icons.copy, color: Colors.white, size: 20),
+                                SizedBox(width: 8),
+                                Text('Credentials copied to clipboard'),
+                              ],
+                            ),
+                            backgroundColor: Colors.green,
+                            behavior: SnackBarBehavior.floating,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                          ),
+                        );
+                        Navigator.pop(context);
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: _primaryColor,
+                        padding: EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                      child: Text('COPY'),
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text('CLOSE'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              // Copy to clipboard functionality would go here
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text('Credentials copied to clipboard'),
-                  backgroundColor: Colors.green,
-                ),
-              );
-              Navigator.pop(context);
-            },
-            child: Text('COPY'),
-          ),
-        ],
       ),
+    );
+  }
+
+  Widget _buildCredentialField(String label, String value, Color color) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: TextStyle(
+            fontWeight: FontWeight.w600,
+            fontSize: 14,
+            color: Colors.grey.shade700,
+          ),
+        ),
+        SizedBox(height: 4),
+        Container(
+          padding: EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: color.withOpacity(0.05),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: color.withOpacity(0.2)),
+          ),
+          child: SelectableText(
+            value,
+            style: TextStyle(
+              fontSize: 16,
+              color: color,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+      ],
     );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: _backgroundColor,
       appBar: AppBar(
-        title: Text('Notifications'),
-        backgroundColor: Colors.deepPurple,
+        title: Text(
+          'Notifications',
+          style: TextStyle(
+            fontWeight: FontWeight.bold,
+            fontSize: 20,
+          ),
+        ),
+        backgroundColor: _primaryColor,
+        elevation: 0,
+        centerTitle: false,
         actions: [
           if (_hasUnread && _notifications.isNotEmpty)
             IconButton(
-              icon: Icon(Icons.mark_email_read),
+              icon: Container(
+                padding: EdgeInsets.all(6),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.2),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(Icons.mark_email_read, size: 20),
+              ),
               onPressed: _markAllAsRead,
               tooltip: 'Mark all as read',
             ),
           IconButton(
-            icon: Icon(Icons.refresh),
+            icon: Container(
+              padding: EdgeInsets.all(6),
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.2),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(Icons.refresh, size: 20),
+            ),
             onPressed: _loadRealNotifications,
             tooltip: 'Refresh',
           ),
         ],
       ),
       body: _isLoading
-          ? Center(child: CircularProgressIndicator())
+          ? _buildLoadingState()
           : _notifications.isEmpty
           ? _buildEmptyState()
           : _buildNotificationsList(),
     );
   }
 
-  Widget _buildEmptyState() {
+  Widget _buildLoadingState() {
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(
-            Icons.notifications_none,
-            size: 80,
-            color: Colors.grey[400],
+          CircularProgressIndicator(
+            valueColor: AlwaysStoppedAnimation<Color>(_primaryColor),
           ),
-          SizedBox(height: 20),
+          SizedBox(height: 16),
           Text(
-            'No notifications yet',
+            'Loading Notifications...',
             style: TextStyle(
-              fontSize: 18,
-              color: Colors.grey[600],
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          SizedBox(height: 10),
-          Text(
-            'You\'ll see payment confirmations,\nroom credentials, and tournament updates here',
-            style: TextStyle(
-              color: Colors.grey[500],
-              fontSize: 14,
-            ),
-            textAlign: TextAlign.center,
-          ),
-          SizedBox(height: 20),
-          ElevatedButton.icon(
-            onPressed: _loadRealNotifications,
-            icon: Icon(Icons.refresh),
-            label: Text('Refresh'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.deepPurple,
+              fontSize: 16,
+              color: Colors.grey.shade600,
+              fontWeight: FontWeight.w500,
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildEmptyState() {
+    return Center(
+      child: Padding(
+        padding: EdgeInsets.all(32),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              padding: EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                shape: BoxShape.circle,
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.grey.withOpacity(0.1),
+                    blurRadius: 10,
+                    spreadRadius: 2,
+                  ),
+                ],
+              ),
+              child: Icon(
+                Icons.notifications_none,
+                size: 64,
+                color: Colors.grey.shade400,
+              ),
+            ),
+            SizedBox(height: 24),
+            Text(
+              'No Notifications',
+              style: TextStyle(
+                fontSize: 20,
+                color: Colors.grey.shade700,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            SizedBox(height: 12),
+            Text(
+              'You\'ll see payment confirmations,\nroom credentials, and tournament updates here',
+              style: TextStyle(
+                color: Colors.grey.shade500,
+                fontSize: 14,
+                height: 1.5,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            SizedBox(height: 24),
+            ElevatedButton.icon(
+              onPressed: _loadRealNotifications,
+              icon: Icon(Icons.refresh, size: 18),
+              label: Text('Refresh Notifications'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _primaryColor,
+                padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1077,29 +1253,48 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       children: [
         if (_hasUnread)
           Container(
-            padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            color: Colors.deepPurple.withOpacity(0.1),
+            padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+            decoration: BoxDecoration(
+              color: _primaryColor.withOpacity(0.05),
+              border: Border(
+                bottom: BorderSide(color: _primaryColor.withOpacity(0.1)),
+              ),
+            ),
             child: Row(
               children: [
-                Icon(Icons.info, size: 16, color: Colors.deepPurple),
+                Container(
+                  padding: EdgeInsets.all(4),
+                  decoration: BoxDecoration(
+                    color: _primaryColor,
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(Icons.circle, size: 8, color: Colors.white),
+                ),
                 SizedBox(width: 8),
                 Text(
                   'You have unread notifications',
                   style: TextStyle(
-                    color: Colors.deepPurple,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w500,
+                    color: _primaryColor,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
                   ),
                 ),
                 Spacer(),
-                TextButton(
-                  onPressed: _markAllAsRead,
-                  child: Text(
-                    'MARK ALL READ',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: Colors.deepPurple,
-                      fontWeight: FontWeight.bold,
+                GestureDetector(
+                  onTap: _markAllAsRead,
+                  child: Container(
+                    padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: _primaryColor,
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: Text(
+                      'MARK ALL READ',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                   ),
                 ),
@@ -1109,9 +1304,12 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         Expanded(
           child: RefreshIndicator(
             onRefresh: _loadRealNotifications,
-            child: ListView.builder(
+            color: _primaryColor,
+            backgroundColor: Colors.white,
+            child: ListView.separated(
               padding: EdgeInsets.all(16),
               itemCount: _notifications.length,
+              separatorBuilder: (context, index) => SizedBox(height: 8),
               itemBuilder: (context, index) {
                 final notification = _notifications[index];
                 return _buildNotificationItem(notification);
@@ -1131,16 +1329,34 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       key: Key(notification['id']),
       direction: DismissDirection.endToStart,
       background: Container(
-        color: Colors.red,
+        decoration: BoxDecoration(
+          color: Colors.red,
+          borderRadius: BorderRadius.circular(12),
+        ),
         alignment: Alignment.centerRight,
         padding: EdgeInsets.only(right: 20),
-        child: Icon(Icons.delete, color: Colors.white),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.end,
+          children: [
+            Icon(Icons.delete, color: Colors.white),
+            SizedBox(width: 8),
+            Text(
+              'Delete',
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            SizedBox(width: 16),
+          ],
+        ),
       ),
       onDismissed: (direction) => _deleteNotification(notification['id']),
       confirmDismiss: (direction) async {
         return await showDialog(
           context: context,
           builder: (context) => AlertDialog(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
             title: Text('Delete Notification'),
             content: Text('Are you sure you want to delete this notification?'),
             actions: [
@@ -1159,66 +1375,89 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
           ),
         );
       },
-      child: Card(
-        margin: EdgeInsets.symmetric(vertical: 4),
-        color: isRead ? Colors.white : Colors.blue[50],
-        elevation: isRead ? 1 : 2,
-        child: ListTile(
-          leading: Container(
-            width: 40,
-            height: 40,
-            decoration: BoxDecoration(
-              color: _getNotificationColor(type).withOpacity(0.1),
-              shape: BoxShape.circle,
-            ),
-            child: Icon(
-              _getNotificationIcon(type),
-              color: _getNotificationColor(type),
-              size: 20,
-            ),
-          ),
-          title: Text(
-            notification['title'],
-            style: TextStyle(
-              fontWeight: isRead ? FontWeight.normal : FontWeight.bold,
-              color: isRead ? Colors.grey[700] : Colors.black,
-            ),
-          ),
-          subtitle: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(notification['body']),
-              SizedBox(height: 4),
-              Text(
-                notification['time'],
-                style: TextStyle(
-                  fontSize: 12,
-                  color: Colors.grey[500],
-                ),
+      child: AnimatedContainer(
+        duration: _animationDuration,
+        curve: Curves.easeInOut,
+        child: Card(
+          margin: EdgeInsets.zero,
+          color: isRead ? Colors.white : Colors.blue.shade50,
+          elevation: isRead ? 1 : 2,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          child: ListTile(
+            contentPadding: EdgeInsets.all(16),
+            leading: Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                color: _getNotificationColor(type).withOpacity(0.1),
+                shape: BoxShape.circle,
               ),
-            ],
-          ),
-          trailing: !isRead
-              ? Container(
-            width: 8,
-            height: 8,
-            decoration: BoxDecoration(
-              color: Colors.deepPurple,
-              shape: BoxShape.circle,
+              child: Icon(
+                _getNotificationIcon(type),
+                color: _getNotificationColor(type),
+                size: 20,
+              ),
             ),
-          )
-              : IconButton(
-            icon: Icon(Icons.delete_outline, size: 18),
-            onPressed: () => _deleteNotification(notification['id']),
-            color: Colors.grey[400],
+            title: Text(
+              notification['title'],
+              style: TextStyle(
+                fontWeight: isRead ? FontWeight.w500 : FontWeight.bold,
+                color: isRead ? Colors.grey.shade700 : Colors.black,
+                fontSize: 15,
+              ),
+            ),
+            subtitle: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SizedBox(height: 4),
+                Text(
+                  notification['body'],
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: Colors.grey.shade600,
+                    height: 1.4,
+                  ),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                SizedBox(height: 6),
+                Row(
+                  children: [
+                    Icon(Icons.access_time, size: 12, color: Colors.grey.shade500),
+                    SizedBox(width: 4),
+                    Text(
+                      notification['time'],
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: Colors.grey.shade500,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+            trailing: !isRead
+                ? Container(
+              width: 10,
+              height: 10,
+              decoration: BoxDecoration(
+                color: _primaryColor,
+                shape: BoxShape.circle,
+              ),
+            )
+                : IconButton(
+              icon: Icon(Icons.delete_outline, size: 18),
+              onPressed: () => _deleteNotification(notification['id']),
+              color: Colors.grey.shade400,
+            ),
+            onTap: () {
+              _markAsRead(notification['id']);
+              if (type == 'room_credentials') {
+                _showRoomCredentialsDialog(notification);
+              }
+            },
+            onLongPress: () => _showNotificationDetails(notification),
           ),
-          onTap: () {
-            _markAsRead(notification['id']);
-            if (type == 'room_credentials') {
-              _showRoomCredentialsDialog(notification);
-            }
-          },
-          onLongPress: () => _showNotificationDetails(notification),
         ),
       ),
     );
@@ -1227,58 +1466,150 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   void _showNotificationDetails(Map<String, dynamic> notification) {
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text(notification['title']),
-        content: SingleChildScrollView(
+      builder: (context) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        child: Padding(
+          padding: EdgeInsets.all(20),
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(notification['body']),
+              Row(
+                children: [
+                  Container(
+                    padding: EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: _getNotificationColor(notification['type']).withOpacity(0.1),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(
+                      _getNotificationIcon(notification['type']),
+                      color: _getNotificationColor(notification['type']),
+                      size: 20,
+                    ),
+                  ),
+                  SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      notification['title'],
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
               SizedBox(height: 16),
+              Text(
+                notification['body'],
+                style: TextStyle(
+                  fontSize: 14,
+                  color: Colors.grey.shade700,
+                  height: 1.5,
+                ),
+              ),
+              SizedBox(height: 20),
               Divider(),
-              SizedBox(height: 8),
+              SizedBox(height: 12),
               Text(
                 'Details',
                 style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  color: Colors.grey[600],
+                  fontWeight: FontWeight.w600,
+                  color: Colors.grey.shade600,
+                  fontSize: 14,
                 ),
               ),
-              SizedBox(height: 8),
-              Text('Type: ${notification['type']}'),
+              SizedBox(height: 12),
+              _buildDetailRow('Type', notification['type']),
               if (notification['amount'] != null && notification['amount'].toString().isNotEmpty)
-                Text('Amount: ₹${notification['amount']}'),
+                _buildDetailRow('Amount', '₹${notification['amount']}'),
               if (notification['tournamentName'] != null)
-                Text('Tournament: ${notification['tournamentName']}'),
+                _buildDetailRow('Tournament', notification['tournamentName']),
               if (notification['roomId'] != null)
-                Text('Room ID: ${notification['roomId']}'),
-              Text('Time: ${notification['time']}'),
-              Text('Status: ${notification['isRead'] == true ? 'Read' : 'Unread'}'),
+                _buildDetailRow('Room ID', notification['roomId']),
+              _buildDetailRow('Time', notification['time']),
+              _buildDetailRow('Status', notification['isRead'] == true ? 'Read' : 'Unread'),
+              SizedBox(height: 20),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.pop(context),
+                      style: OutlinedButton.styleFrom(
+                        padding: EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                      child: Text('CLOSE'),
+                    ),
+                  ),
+                  if (notification['isRead'] == false) ...[
+                    SizedBox(width: 12),
+                    Expanded(
+                      child: ElevatedButton(
+                        onPressed: () {
+                          _markAsRead(notification['id']);
+                          Navigator.pop(context);
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: _primaryColor,
+                          padding: EdgeInsets.symmetric(vertical: 12),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        ),
+                        child: Text('MARK READ'),
+                      ),
+                    ),
+                  ],
+                  if (notification['type'] == 'room_credentials') ...[
+                    SizedBox(width: 12),
+                    Expanded(
+                      child: ElevatedButton(
+                        onPressed: () {
+                          Navigator.pop(context);
+                          _showRoomCredentialsDialog(notification);
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.blue,
+                          padding: EdgeInsets.symmetric(vertical: 12),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        ),
+                        child: Text('CREDENTIALS'),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
             ],
           ),
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text('CLOSE'),
+      ),
+    );
+  }
+
+  Widget _buildDetailRow(String label, String value) {
+    return Padding(
+      padding: EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '$label:',
+            style: TextStyle(
+              fontWeight: FontWeight.w500,
+              color: Colors.grey.shade600,
+              fontSize: 13,
+            ),
           ),
-          if (notification['isRead'] == false)
-            TextButton(
-              onPressed: () {
-                _markAsRead(notification['id']);
-                Navigator.pop(context);
-              },
-              child: Text('MARK READ'),
+          SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              value,
+              style: TextStyle(
+                color: Colors.grey.shade800,
+                fontSize: 13,
+              ),
             ),
-          if (notification['type'] == 'room_credentials')
-            ElevatedButton(
-              onPressed: () {
-                Navigator.pop(context);
-                _showRoomCredentialsDialog(notification);
-              },
-              child: Text('VIEW CREDENTIALS'),
-            ),
+          ),
         ],
       ),
     );

@@ -1,14 +1,14 @@
-// services/notification_triggers.dart
+// services/notification_msg.dart
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 
-class NotificationTriggers {
+class NotificationMessage {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
 
-  // Replace with your FCM server key
+  // Replace with your FCM server key from Firebase Console
   static const String _serverKey = 'YOUR_FCM_SERVER_KEY_HERE';
 
   // Send notification to specific user
@@ -32,14 +32,6 @@ class NotificationTriggers {
 
       if (fcmToken == null || fcmToken.isEmpty) {
         print('⚠️ No FCM token for user: $userName');
-        // Still save to Firestore even if no FCM token
-        await _saveToUserNotifications(
-          userName: userName,
-          title: title,
-          body: body,
-          type: type,
-          data: data,
-        );
         return;
       }
 
@@ -95,20 +87,21 @@ class NotificationTriggers {
               ...?data,
             },
           );
+
+          // Save to user's notifications
+          await _saveToUserNotifications(
+            userName: userName,
+            title: title,
+            body: body,
+            type: type,
+            data: data,
+          );
+
           successCount++;
+
+          // Add small delay to avoid rate limiting
+          await Future.delayed(Duration(milliseconds: 50));
         }
-
-        // Save to user's notifications regardless of FCM token
-        await _saveToUserNotifications(
-          userName: userName,
-          title: title,
-          body: body,
-          type: type,
-          data: data,
-        );
-
-        // Add delay to avoid rate limiting
-        await Future.delayed(Duration(milliseconds: 50));
       }
 
       print('✅ Notification sent to $successCount/${usersSnapshot.docs.length} users');
@@ -154,22 +147,21 @@ class NotificationTriggers {
                 ...?data,
               },
             );
+
+            await _saveToUserNotifications(
+              userName: userName,
+              title: title,
+              body: body,
+              type: type,
+              data: {
+                'tournamentId': tournamentId,
+                ...?data,
+              },
+            );
+
             successCount++;
+            await Future.delayed(Duration(milliseconds: 50));
           }
-
-          // Save to user's notifications
-          await _saveToUserNotifications(
-            userName: userName,
-            title: title,
-            body: body,
-            type: type,
-            data: {
-              'tournamentId': tournamentId,
-              ...?data,
-            },
-          );
-
-          await Future.delayed(Duration(milliseconds: 50));
         }
       }
 
@@ -245,7 +237,7 @@ class NotificationTriggers {
     }
   }
 
-  // Pre-built notification templates for Admin Panel
+  // Pre-built notification templates
   Future<void> sendPaymentSuccess({
     required String userName,
     required double amount,
@@ -259,38 +251,6 @@ class NotificationTriggers {
       data: {
         'amount': amount.toString(),
         'transactionId': transactionId,
-      },
-    );
-  }
-
-  Future<void> sendWithdrawalApproved({
-    required String userName,
-    required double amount,
-  }) async {
-    await sendToUser(
-      userName: userName,
-      title: '✅ Withdrawal Approved',
-      body: 'Your withdrawal of ₹${amount.toStringAsFixed(2)} has been approved and processed.',
-      type: 'withdrawal_approved',
-      data: {
-        'amount': amount.toString(),
-      },
-    );
-  }
-
-  Future<void> sendWithdrawalRejected({
-    required String userName,
-    required double amount,
-    String? reason,
-  }) async {
-    await sendToUser(
-      userName: userName,
-      title: '❌ Withdrawal Rejected',
-      body: 'Your withdrawal of ₹${amount.toStringAsFixed(2)} was rejected. ${reason ?? 'Amount has been refunded to your wallet.'}',
-      type: 'withdrawal_rejected',
-      data: {
-        'amount': amount.toString(),
-        'reason': reason,
       },
     );
   }
@@ -335,6 +295,21 @@ class NotificationTriggers {
     );
   }
 
+  Future<void> sendWithdrawalApproved({
+    required String userName,
+    required double amount,
+  }) async {
+    await sendToUser(
+      userName: userName,
+      title: '✅ Withdrawal Approved',
+      body: 'Your withdrawal of ₹${amount.toStringAsFixed(2)} has been approved and processed.',
+      type: 'withdrawal_approved',
+      data: {
+        'amount': amount.toString(),
+      },
+    );
+  }
+
   Future<void> sendTournamentStarting({
     required String tournamentId,
     required String tournamentName,
@@ -364,20 +339,6 @@ class NotificationTriggers {
       type: 'welcome_bonus',
       data: {
         'amount': bonusAmount.toString(),
-      },
-    );
-  }
-
-  Future<void> sendAdminAnnouncement({
-    required String title,
-    required String message,
-  }) async {
-    await sendToAllUsers(
-      title: title,
-      body: message,
-      type: 'admin_announcement',
-      data: {
-        'announcement': 'true',
       },
     );
   }

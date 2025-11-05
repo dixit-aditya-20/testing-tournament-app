@@ -1,11 +1,14 @@
 // ===============================
-// DASHBOARD SCREEN WITH COMPLETE FIXES
+// DASHBOARD SCREEN WITH ADD MONEY FUNCTIONALITY
 // ===============================
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:intl/intl.dart';
+import 'package:razorpay_flutter/razorpay_flutter.dart';
 import '../services/firebase_service.dart';
+import 'notificcation_screen.dart';
 
 class DashboardScreen extends StatefulWidget {
   @override
@@ -17,17 +20,167 @@ class _DashboardScreenState extends State<DashboardScreen> {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
 
+  // Add Razorpay integration
+  late Razorpay _razorpay;
+  final TextEditingController _amountController = TextEditingController();
+  bool _isProcessing = false;
+
   List<Map<String, dynamic>> _topPlayers = [];
   List<Map<String, dynamic>> _recentMatches = [];
   List<Map<String, dynamic>> _recentTransactions = [];
   Map<String, dynamic> _userStats = {};
   Map<String, dynamic> _userProfile = {};
   bool _isLoading = true;
+  bool _isRefreshing = false;
 
   @override
   void initState() {
     super.initState();
+    // Initialize Razorpay
+    _razorpay = Razorpay();
+    _razorpay.on(Razorpay.EVENT_PAYMENT_SUCCESS, _handlePaymentSuccess);
+    _razorpay.on(Razorpay.EVENT_PAYMENT_ERROR, _handlePaymentError);
+    _razorpay.on(Razorpay.EVENT_EXTERNAL_WALLET, _handleExternalWallet);
+
     _loadDashboardData();
+  }
+
+  @override
+  void dispose() {
+    _razorpay.clear();
+    _amountController.dispose();
+    super.dispose();
+  }
+
+  // Add Money Methods
+  void _showAddMoneyDialog() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => AddMoneyBottomSheet(
+        amountController: _amountController,
+        walletBalance: _userStats['current_balance'] ?? 0.0,
+        onProceed: _processRazorpayPayment,
+        isProcessing: _isProcessing,
+      ),
+    );
+  }
+
+  void _processRazorpayPayment(double amount) {
+    if (_isProcessing) return;
+
+    setState(() {
+      _isProcessing = true;
+    });
+
+    var options = {
+      'key': 'rzp_test_1DP5mmOlF5G5ag', // Replace with your Razorpay key
+      'amount': (amount * 100).toInt(),
+      'name': 'Game Tournaments',
+      'description': 'Add Money to Wallet',
+      'prefill': {
+        'contact': '8888888888',
+        'email': _auth.currentUser?.email ?? 'user@example.com',
+      },
+      'theme': {'color': Colors.deepPurple.value},
+    };
+
+    try {
+      _razorpay.open(options);
+    } catch (e) {
+      print('Razorpay Error: $e');
+      setState(() {
+        _isProcessing = false;
+      });
+      _showErrorSnackBar('Error opening payment gateway');
+    }
+  }
+
+  void _handlePaymentSuccess(PaymentSuccessResponse response) async {
+    final amount = double.tryParse(_amountController.text) ?? 0.0;
+
+    try {
+      final success = await _firebaseService.addMoney(amount, response.paymentId!, 'razorpay');
+
+      if (success) {
+        _amountController.clear();
+        _showSuccessSnackBar('₹${amount.toStringAsFixed(2)} added to your wallet!');
+        // Refresh dashboard data to update balance
+        _refreshData();
+      } else {
+        throw Exception('Failed to add money to wallet');
+      }
+    } catch (e) {
+      print('❌ Error in payment success: $e');
+      _showErrorSnackBar('Error adding money to wallet');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isProcessing = false;
+        });
+      }
+    }
+  }
+
+  void _handlePaymentError(PaymentFailureResponse response) {
+    setState(() {
+      _isProcessing = false;
+    });
+    _showErrorSnackBar('Payment Failed: ${response.message ?? "Unknown error"}');
+  }
+
+  void _handleExternalWallet(ExternalWalletResponse response) {
+    _showInfoSnackBar('External Wallet Selected: ${response.walletName}');
+  }
+
+  // Snackbar helpers
+  void _showSuccessSnackBar(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            Icon(Icons.check_circle, color: Colors.white, size: 20),
+            SizedBox(width: 8),
+            Expanded(child: Text(message)),
+          ],
+        ),
+        backgroundColor: Colors.green,
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  void _showErrorSnackBar(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            Icon(Icons.error_outline, color: Colors.white, size: 20),
+            SizedBox(width: 8),
+            Expanded(child: Text(message)),
+          ],
+        ),
+        backgroundColor: Colors.red,
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  void _showInfoSnackBar(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            Icon(Icons.info_outline, color: Colors.white, size: 20),
+            SizedBox(width: 8),
+            Expanded(child: Text(message)),
+          ],
+        ),
+        backgroundColor: Colors.blue,
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
   }
 
   Future<void> _loadDashboardData() async {
@@ -41,6 +194,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       ]);
     } catch (e) {
       print('❌ Error loading dashboard data: $e');
+      _showSnackBar('Failed to load dashboard data');
     } finally {
       setState(() {
         _isLoading = false;
@@ -48,11 +202,26 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
+  Future<void> _refreshData() async {
+    setState(() => _isRefreshing = true);
+    await _loadDashboardData();
+    setState(() => _isRefreshing = false);
+  }
+
+  void _showSnackBar(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.deepPurple,
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
   Future<void> _loadUserProfile() async {
     try {
       final user = _auth.currentUser;
       if (user != null) {
-        // Get user document by querying with UID
         final userQuery = await _firestore
             .collection('users')
             .where('uid', isEqualTo: user.uid)
@@ -63,7 +232,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           final userDoc = userQuery.docs.first;
           setState(() {
             _userProfile = userDoc.data()!;
-            _userProfile['documentId'] = userDoc.id; // Store the actual document ID
+            _userProfile['documentId'] = userDoc.id;
           });
           print('✅ User profile loaded: ${_userProfile['name']}');
         } else {
@@ -80,7 +249,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
       final user = _auth.currentUser;
       if (user == null) return;
 
-      // Get user document to find the actual document ID
       final userQuery = await _firestore
           .collection('users')
           .where('uid', isEqualTo: user.uid)
@@ -94,15 +262,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
       final userDoc = userQuery.docs.first;
       final userData = userDoc.data();
-      final userName = userDoc.id; // This is the actual document ID
+      final userName = userDoc.id;
 
       print('🔍 Loading wallet data for user: $userName');
 
-      // Try multiple wallet locations
       double totalWinnings = 0.0;
       double currentBalance = 0.0;
 
-      // METHOD 1: Try wallet_data document (most common)
+      // METHOD 1: Try wallet_data document
       try {
         final walletDataDoc = await _firestore
             .collection('wallet')
@@ -116,14 +283,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
           totalWinnings = (walletData?['total_winning'] as num?)?.toDouble() ?? 0.0;
           currentBalance = (walletData?['total_balance'] as num?)?.toDouble() ?? 0.0;
           print('💰 Wallet data found in wallet_data: balance=$currentBalance, winning=$totalWinnings');
-        } else {
-          print('❌ No wallet_data document found');
         }
       } catch (e) {
         print('⚠️ Error checking wallet_data: $e');
       }
 
-      // METHOD 2: Try balance document (alternative location)
+      // METHOD 2: Try balance document
       if (currentBalance == 0.0) {
         try {
           final balanceDoc = await _firestore
@@ -138,29 +303,24 @@ class _DashboardScreenState extends State<DashboardScreen> {
             totalWinnings = (balanceData?['total_winning'] as num?)?.toDouble() ?? 0.0;
             currentBalance = (balanceData?['total_balance'] as num?)?.toDouble() ?? 0.0;
             print('💰 Wallet data found in balance: balance=$currentBalance, winning=$totalWinnings');
-          } else {
-            print('❌ No balance document found');
           }
         } catch (e) {
           print('⚠️ Error checking balance document: $e');
         }
       }
 
-      // METHOD 3: Check if wallet data is in user document itself
+      // METHOD 3: Check user document wallet
       if (currentBalance == 0.0) {
         final userWallet = userData['wallet'] as Map<String, dynamic>?;
         if (userWallet != null) {
           totalWinnings = (userWallet['total_winning'] as num?)?.toDouble() ?? 0.0;
           currentBalance = (userWallet['total_balance'] as num?)?.toDouble() ?? 0.0;
           print('💰 Wallet data found in user document: balance=$currentBalance, winning=$totalWinnings');
-        } else {
-          print('❌ No wallet data in user document');
         }
       }
 
-      // Get tournament registrations to calculate stats
+      // Calculate match statistics
       final registrations = userData['tournament_registrations'] as List<dynamic>? ?? [];
-
       int totalMatches = registrations.length;
       int matchesWon = registrations.where((reg) =>
       reg is Map<String, dynamic> &&
@@ -178,15 +338,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
           'current_balance': currentBalance,
           'win_rate': winRate,
           'tournaments_played': totalMatches,
+          'current_streak': 0,
+          'best_streak': 0,
         };
       });
 
-      print('📊 User stats loaded:');
-      print('   - Balance: ₹$currentBalance');
-      print('   - Winnings: ₹$totalWinnings');
-      print('   - Matches: $totalMatches');
-      print('   - Won: $matchesWon');
-      print('   - Win Rate: $winRate%');
+      print('📊 User stats loaded successfully');
 
     } catch (e) {
       print('❌ Error loading user stats: $e');
@@ -199,6 +356,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
           'current_balance': 0.0,
           'win_rate': 0.0,
           'tournaments_played': 0,
+          'current_streak': 0,
+          'best_streak': 0,
         };
       });
     }
@@ -209,7 +368,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
       final usersSnapshot = await _firestore.collection('users').get();
       List<Map<String, dynamic>> players = [];
 
-      // If there's only one user in the system, show them as top player regardless of winnings
       if (usersSnapshot.docs.length == 1) {
         final userDoc = usersSnapshot.docs.first;
         final userData = userDoc.data();
@@ -218,7 +376,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
         double totalWinning = 0.0;
         double totalBalance = 0.0;
 
-        // Try to get wallet data
         try {
           final walletDoc = await _firestore
               .collection('wallet')
@@ -233,23 +390,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             totalBalance = (walletData['total_balance'] as num?)?.toDouble() ?? 0.0;
           }
         } catch (e) {
-          // Try balance document as fallback
-          try {
-            final balanceDoc = await _firestore
-                .collection('wallet')
-                .doc('users')
-                .collection(userName)
-                .doc('balance')
-                .get();
-
-            if (balanceDoc.exists) {
-              final balanceData = balanceDoc.data() ?? {};
-              totalWinning = (balanceData['total_winning'] as num?)?.toDouble() ?? 0.0;
-              totalBalance = (balanceData['total_balance'] as num?)?.toDouble() ?? 0.0;
-            }
-          } catch (e) {
-            print('⚠️ Error loading wallet for user $userName: $e');
-          }
+          print('⚠️ Error loading wallet for user $userName: $e');
         }
 
         players.add({
@@ -258,19 +399,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
           'total_winning': totalWinning,
           'total_balance': totalBalance,
           'email': userData['email'] ?? '',
-          'is_only_player': true, // Flag to indicate this is the only player
+          'is_only_player': true,
+          'avatar': userData['avatar'] ?? '',
         });
       } else {
-        // Multiple users - process normally
         for (var userDoc in usersSnapshot.docs) {
           final userData = userDoc.data();
           final userName = userDoc.id;
 
-          // Get wallet data for each user from multiple locations
           double totalWinning = 0.0;
           double totalBalance = 0.0;
 
-          // Try wallet_data first
           try {
             final walletDoc = await _firestore
                 .collection('wallet')
@@ -285,26 +424,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
               totalBalance = (walletData['total_balance'] as num?)?.toDouble() ?? 0.0;
             }
           } catch (e) {
-            // Try balance document as fallback
-            try {
-              final balanceDoc = await _firestore
-                  .collection('wallet')
-                  .doc('users')
-                  .collection(userName)
-                  .doc('balance')
-                  .get();
-
-              if (balanceDoc.exists) {
-                final balanceData = balanceDoc.data() ?? {};
-                totalWinning = (balanceData['total_winning'] as num?)?.toDouble() ?? 0.0;
-                totalBalance = (balanceData['total_balance'] as num?)?.toDouble() ?? 0.0;
-              }
-            } catch (e) {
-              print('⚠️ Error loading wallet for user $userName: $e');
-            }
+            print('⚠️ Error loading wallet for user $userName: $e');
           }
 
-          // Include players even if winnings are zero (show all players)
           players.add({
             'userId': userData['uid'] ?? userName,
             'name': userData['name'] ?? 'Unknown Player',
@@ -312,14 +434,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
             'total_balance': totalBalance,
             'email': userData['email'] ?? '',
             'is_only_player': false,
+            'avatar': userData['avatar'] ?? '',
           });
         }
       }
 
-      // Sort by total winnings (descending) - players with zero winnings will be at the bottom
       players.sort((a, b) => (b['total_winning'] as double).compareTo(a['total_winning'] as double));
 
-      // Take top 10 or all players if less than 10
       setState(() {
         _topPlayers = players.take(10).toList();
       });
@@ -356,7 +477,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
           final tournamentId = reg['tournament_id'];
           final status = reg['status'] ?? 'registered';
 
-          // Get tournament details
           try {
             final tournamentDoc = await _firestore.collection('tournaments').doc(tournamentId).get();
             if (tournamentDoc.exists) {
@@ -367,11 +487,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 'tournament_name': tournamentData['tournament_name'] ?? 'Unknown Tournament',
                 'game_name': tournamentData['game_name'] ?? 'Unknown Game',
                 'entry_fee': (tournamentData['entry_fee'] as num?)?.toDouble() ?? 0.0,
+                'prize_pool': (tournamentData['prize_pool'] as num?)?.toDouble() ?? 0.0,
                 'status': status,
                 'position': reg['position'] ?? 0,
                 'is_winner': reg['is_winner'] ?? false,
                 'registered_at': reg['registered_at'],
                 'match_time': tournamentData['tournament_start'],
+                'players_joined': tournamentData['players_joined'] ?? 0,
               });
             }
           } catch (e) {
@@ -380,7 +502,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
         }
       }
 
-      // Sort by registration time (most recent first)
       matches.sort((a, b) {
         final timeA = a['registered_at'] as Timestamp? ?? Timestamp.now();
         final timeB = b['registered_at'] as Timestamp? ?? Timestamp.now();
@@ -404,7 +525,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
       final user = _auth.currentUser;
       if (user == null) return;
 
-      // Get user document ID first
       final userQuery = await _firestore
           .collection('users')
           .where('uid', isEqualTo: user.uid)
@@ -421,7 +541,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
       List<Map<String, dynamic>> transactions = [];
 
-      // METHOD 1: Check transactions document in wallet collection
+      // METHOD 1: Check transactions document
       try {
         final transactionsDoc = await _firestore
             .collection('wallet')
@@ -434,7 +554,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
           final transactionsData = transactionsDoc.data() ?? {};
           print('📄 Transactions document data found');
 
-          // Check different transaction status structures
           final statusTypes = ['successful', 'pending', 'failed', 'completed', 'approved', 'denied'];
 
           for (var status in statusTypes) {
@@ -462,6 +581,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       transaction['method'] ??
                       'No Method',
                   'timestamp': timestamp is Timestamp ? timestamp : Timestamp.now(),
+                  'reference_id': transaction['reference_id'] ?? '',
                 });
               }
             }
@@ -473,7 +593,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         print('⚠️ Error loading transactions from wallet: $e');
       }
 
-      // METHOD 2: Check if transactions are in user document directly
+      // METHOD 2: Check user document transactions
       if (transactions.isEmpty) {
         try {
           final userData = userQuery.docs.first.data();
@@ -501,6 +621,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     transaction['method'] ??
                     'No Method',
                 'timestamp': timestamp is Timestamp ? timestamp : Timestamp.now(),
+                'reference_id': transaction['reference_id'] ?? '',
               });
             }
           }
@@ -509,7 +630,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         }
       }
 
-      // METHOD 3: Check withdrawal requests as transactions - FIXED STATUS ISSUE
+      // METHOD 3: Check withdrawal requests
       try {
         final withdrawDoc = await _firestore
             .collection('wallet')
@@ -522,7 +643,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
           final withdrawData = withdrawDoc.data() ?? {};
           print('💰 Withdrawal data found');
 
-          // Check pending withdrawals
           final pendingWithdrawals = withdrawData['pending'] as List<dynamic>? ?? [];
           for (var withdrawal in pendingWithdrawals) {
             if (withdrawal is Map<String, dynamic>) {
@@ -534,11 +654,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 'status': 'pending',
                 'payment_method': withdrawal['payment_method'] ?? 'No Method',
                 'timestamp': withdrawal['requested_at'] ?? Timestamp.now(),
+                'reference_id': withdrawal['reference_id'] ?? '',
               });
             }
           }
 
-          // Check approved withdrawals
           final approvedWithdrawals = withdrawData['approved'] as List<dynamic>? ?? [];
           for (var withdrawal in approvedWithdrawals) {
             if (withdrawal is Map<String, dynamic>) {
@@ -547,14 +667,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 'amount': (withdrawal['amount'] as num?)?.toDouble() ?? 0.0,
                 'type': 'withdrawal',
                 'description': 'Withdrawal Approved',
-                'status': 'completed', // FIXED: Changed from 'approved' to 'completed'
+                'status': 'completed',
                 'payment_method': withdrawal['payment_method'] ?? 'No Method',
                 'timestamp': withdrawal['processed_at'] ?? withdrawal['approved_at'] ?? Timestamp.now(),
+                'reference_id': withdrawal['reference_id'] ?? '',
               });
             }
           }
 
-          // Check rejected withdrawals
           final rejectedWithdrawals = withdrawData['rejected'] as List<dynamic>? ?? [];
           for (var withdrawal in rejectedWithdrawals) {
             if (withdrawal is Map<String, dynamic>) {
@@ -566,6 +686,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 'status': 'failed',
                 'payment_method': withdrawal['payment_method'] ?? 'No Method',
                 'timestamp': withdrawal['rejected_at'] ?? Timestamp.now(),
+                'reference_id': withdrawal['reference_id'] ?? '',
               });
             }
           }
@@ -576,7 +697,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         print('⚠️ Error loading withdrawal requests: $e');
       }
 
-      // METHOD 4: Check tournament registrations as transactions
+      // METHOD 4: Check tournament registrations
       if (transactions.isEmpty) {
         try {
           final userData = userQuery.docs.first.data();
@@ -594,10 +715,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   'status': 'completed',
                   'payment_method': 'Wallet',
                   'timestamp': reg['registered_at'] ?? Timestamp.now(),
+                  'reference_id': reg['tournament_id'] ?? '',
                 });
               }
 
-              // Add winnings as transactions
               final winnings = (reg['winnings'] as num?)?.toDouble() ?? 0.0;
               if (winnings > 0) {
                 transactions.add({
@@ -608,6 +729,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   'status': 'completed',
                   'payment_method': 'System',
                   'timestamp': reg['completed_at'] ?? Timestamp.now(),
+                  'reference_id': reg['tournament_id'] ?? '',
                 });
               }
             }
@@ -617,13 +739,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         }
       }
 
-      // METHOD 5: Generate sample transactions for testing if still empty
-      if (transactions.isEmpty) {
-        print('⚠️ No transactions found ');
-        // transactions = _generateSampleTransactions();
-      }
-
-      // Sort by timestamp (most recent first)
+      // Sort by timestamp
       transactions.sort((a, b) {
         final timeA = a['timestamp'] as Timestamp;
         final timeB = b['timestamp'] as Timestamp;
@@ -635,67 +751,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
       });
 
       print('💳 Final transactions loaded: ${_recentTransactions.length}');
-      for (var tx in _recentTransactions) {
-        print('   - ${tx['type']}: ₹${tx['amount']} (${tx['status']}) - ${tx['description']}');
-      }
 
     } catch (e) {
       print('❌ Error loading recent transactions: $e');
-      // Generate sample data on error
       setState(() {
         _recentTransactions = [];
       });
     }
-  }
-
-  List<Map<String, dynamic>> _generateSampleTransactions() {
-    return [
-      {
-        'id': 'sample_1',
-        'amount': 500.0,
-        'type': 'deposit',
-        'description': 'Wallet Recharge via UPI',
-        'status': 'completed',
-        'payment_method': 'UPI',
-        'timestamp': Timestamp.fromDate(DateTime.now().subtract(Duration(hours: 1))),
-      },
-      {
-        'id': 'sample_2',
-        'amount': 100.0,
-        'type': 'tournament_entry',
-        'description': 'BGMI Championship Entry',
-        'status': 'completed',
-        'payment_method': 'Wallet',
-        'timestamp': Timestamp.fromDate(DateTime.now().subtract(Duration(hours: 3))),
-      },
-      {
-        'id': 'sample_3',
-        'amount': 250.0,
-        'type': 'winning',
-        'description': 'Tournament Prize Money',
-        'status': 'completed',
-        'payment_method': 'System',
-        'timestamp': Timestamp.fromDate(DateTime.now().subtract(Duration(days: 1))),
-      },
-      {
-        'id': 'sample_4',
-        'amount': 50.0,
-        'type': 'tournament_entry',
-        'description': 'Free Fire Tournament',
-        'status': 'completed',
-        'payment_method': 'Wallet',
-        'timestamp': Timestamp.fromDate(DateTime.now().subtract(Duration(days: 2))),
-      },
-      {
-        'id': 'sample_5',
-        'amount': 150.0,
-        'type': 'withdrawal',
-        'description': 'Withdrawal to Bank Account',
-        'status': 'pending',
-        'payment_method': 'Bank Transfer',
-        'timestamp': Timestamp.fromDate(DateTime.now().subtract(Duration(days: 1))),
-      },
-    ];
   }
 
   String _formatTimeAgo(Timestamp timestamp) {
@@ -712,6 +774,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
     } else {
       return 'Just now';
     }
+  }
+
+  String _formatDate(Timestamp timestamp) {
+    return DateFormat('MMM dd, yyyy').format(timestamp.toDate());
   }
 
   String _getMatchStatusIcon(String status, bool isWinner) {
@@ -743,6 +809,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
         return '🏆';
       case 'refund':
         return '↩️';
+      case 'bonus':
+        return '🎁';
       default:
         return '💳';
     }
@@ -754,6 +822,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       case 'winning':
       case 'refund':
       case 'credit':
+      case 'bonus':
         return Colors.green;
       case 'withdrawal':
       case 'tournament_entry':
@@ -764,35 +833,57 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
+  void _handleViewAllMatches() {
+    print('Navigate to all matches screen');
+  }
+
+  void _handleViewAllTransactions() {
+    print('Navigate to all transactions screen');
+  }
+
   @override
   Widget build(BuildContext context) {
     return _isLoading
-        ? Center(child: CircularProgressIndicator())
-        : RefreshIndicator(
-      onRefresh: _loadDashboardData,
-      child: SingleChildScrollView(
-        padding: EdgeInsets.all(16),
+        ? _buildLoadingScreen()
+        : Scaffold(
+      backgroundColor: Colors.grey[50],
+      body: RefreshIndicator(
+        onRefresh: _refreshData,
+        color: Colors.deepPurple,
+        backgroundColor: Colors.white,
+        child: CustomScrollView(
+          slivers: [
+            SliverToBoxAdapter(child: _buildWelcomeSection()),
+            SliverToBoxAdapter(child: _buildQuickStatsSection()),
+            SliverToBoxAdapter(child: _buildTopPlayersSection()),
+            SliverToBoxAdapter(child: _buildRecentMatchesSection()),
+            SliverToBoxAdapter(child: _buildRecentTransactionsSection()),
+            SliverToBoxAdapter(child: SizedBox(height: 20)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLoadingScreen() {
+    return Scaffold(
+      backgroundColor: Colors.grey[50],
+      body: Center(
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            // Welcome Section
-            _buildWelcomeSection(),
-            SizedBox(height: 24),
-
-            // Quick Stats Section
-            _buildQuickStatsSection(),
-            SizedBox(height: 24),
-
-            // Top Players Section
-            _buildTopPlayersSection(),
-            SizedBox(height: 24),
-
-            // Recent Matches Section
-            _buildRecentMatchesSection(),
-            SizedBox(height: 24),
-
-            // Recent Transactions Section
-            _buildRecentTransactionsSection(),
+            CircularProgressIndicator(
+              valueColor: AlwaysStoppedAnimation<Color>(Colors.deepPurple),
+            ),
+            SizedBox(height: 16),
+            Text(
+              'Loading Your Dashboard...',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w500,
+                color: Colors.grey[600],
+              ),
+            ),
           ],
         ),
       ),
@@ -804,268 +895,362 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final userEmail = _userProfile['email'] ?? '';
     final currentBalance = _userStats['current_balance'] ?? 0.0;
 
-    return Card(
-      elevation: 4,
-      child: Padding(
-        padding: EdgeInsets.all(20),
-        child: Row(
-          children: [
-            CircleAvatar(
-              radius: 30,
-              backgroundColor: Colors.deepPurple,
-              child: Icon(
-                Icons.person,
-                size: 30,
-                color: Colors.white,
-              ),
-            ),
-            SizedBox(width: 16),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Colors.deepPurple, Colors.purple.shade700],
+        ),
+        borderRadius: BorderRadius.only(
+          bottomLeft: Radius.circular(24),
+          bottomRight: Radius.circular(24),
+        ),
+      ),
+      child: SafeArea(
+        bottom: false,
+        child: Padding(
+          padding: EdgeInsets.all(16), // Reduced from 20
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
                 children: [
-                  Text(
-                    'Welcome, $userName!',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.deepPurple,
+                  CircleAvatar(
+                    radius: 22, // Reduced from 24
+                    backgroundColor: Colors.white.withOpacity(0.2),
+                    child: Icon(
+                      Icons.person,
+                      size: 22, // Reduced from 24
+                      color: Colors.white,
                     ),
                   ),
-                  SizedBox(height: 4),
-                  Text(
-                    userEmail,
-                    style: TextStyle(
-                      fontSize: 14,
-                      color: Colors.grey[600],
-                    ),
-                  ),
-                  SizedBox(height: 8),
-                  Container(
-                    padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: Colors.deepPurple.withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
+                  SizedBox(width: 10), // Reduced from 12
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Icon(Icons.account_balance_wallet, size: 16, color: Colors.deepPurple),
-                        SizedBox(width: 4),
                         Text(
-                          '₹${currentBalance.toStringAsFixed(2)}',
+                          'Welcome back,',
                           style: TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.deepPurple,
+                            color: Colors.white70,
+                            fontSize: 13, // Reduced from 14
                           ),
+                        ),
+                        Text(
+                          userName,
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 16, // Reduced from 18
+                            fontWeight: FontWeight.bold,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                         ),
                       ],
                     ),
                   ),
+                  IconButton(
+                    icon: Icon(Icons.notifications_outlined, color: Colors.white, size: 20), // Reduced size
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => NotificationsScreen(),
+                        ),
+                      );
+                    },
+                  ),
                 ],
               ),
-            ),
-          ],
+              SizedBox(height: 16), // Reduced from 20
+              Container(
+                padding: EdgeInsets.all(14), // Reduced from 16
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(14), // Reduced from 16
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.account_balance_wallet, color: Colors.white, size: 22), // Reduced from 24
+                    SizedBox(width: 10), // Reduced from 12
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Current Balance',
+                            style: TextStyle(
+                              color: Colors.white70,
+                              fontSize: 13, // Reduced from 14
+                            ),
+                          ),
+                          SizedBox(height: 4),
+                          Text(
+                            '₹${currentBalance.toStringAsFixed(2)}',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 20, // Reduced from 24
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    GestureDetector(
+                      onTap: _showAddMoneyDialog,
+                      child: Container(
+                        padding: EdgeInsets.symmetric(horizontal: 14, vertical: 6), // Reduced padding
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(18), // Reduced from 20
+                        ),
+                        child: Text(
+                          'Add Money',
+                          style: TextStyle(
+                            color: Colors.deepPurple,
+                            fontSize: 13, // Reduced from 14
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              SizedBox(height: 8),
+            ],
+          ),
         ),
       ),
     );
   }
 
   Widget _buildQuickStatsSection() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'My Statistics',
-          style: TextStyle(
-            fontSize: 20,
-            fontWeight: FontWeight.bold,
+    return Padding(
+      padding: EdgeInsets.all(14), // Reduced from 16
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'My Statistics',
+            style: TextStyle(
+              fontSize: 18, // Reduced from 20
+              fontWeight: FontWeight.bold,
+            ),
           ),
-        ),
-        SizedBox(height: 12),
-        GridView.count(
-          shrinkWrap: true,
-          physics: NeverScrollableScrollPhysics(),
-          crossAxisCount: 2,
-          crossAxisSpacing: 12,
-          mainAxisSpacing: 12,
-          children: [
-            _buildStatCard(
-              'Total Matches',
-              '${_userStats['total_matches'] ?? 0}',
-              Icons.sports_esports,
-              Colors.blue,
-            ),
-            _buildStatCard(
-              'Matches Won',
-              '${_userStats['matches_won'] ?? 0}',
-              Icons.emoji_events,
-              Colors.green,
-            ),
-            _buildStatCard(
-              'Total Winnings',
-              '₹${(_userStats['total_winnings'] ?? 0.0).toStringAsFixed(2)}',
-              Icons.attach_money,
-              Colors.orange,
-            ),
-            _buildStatCard(
-              'Win Rate',
-              '${(_userStats['win_rate'] ?? 0.0).toStringAsFixed(1)}%',
-              Icons.trending_up,
-              Colors.purple,
-            ),
-          ],
-        ),
-      ],
+          SizedBox(height: 14), // Reduced from 16
+          GridView.count(
+            shrinkWrap: true,
+            physics: NeverScrollableScrollPhysics(),
+            crossAxisCount: 2,
+            crossAxisSpacing: 10, // Reduced from 12
+            mainAxisSpacing: 10, // Reduced from 12
+            childAspectRatio: 1.1, // Reduced from 1.2
+            children: [
+              _buildStatCard(
+                'Total Matches',
+                '${_userStats['total_matches'] ?? 0}',
+                Icons.sports_esports,
+                Colors.blue,
+                'All tournaments played',
+              ),
+              _buildStatCard(
+                'Matches Won',
+                '${_userStats['matches_won'] ?? 0}',
+                Icons.emoji_events,
+                Colors.green,
+                'Victorious matches',
+              ),
+              _buildStatCard(
+                'Total Winnings',
+                '₹${(_userStats['total_winnings'] ?? 0.0).toStringAsFixed(2)}',
+                Icons.attach_money,
+                Colors.orange,
+                'Total earnings',
+              ),
+              _buildStatCard(
+                'Win Rate',
+                '${(_userStats['win_rate'] ?? 0.0).toStringAsFixed(1)}%',
+                Icons.trending_up,
+                Colors.purple,
+                'Success ratio',
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 
   Widget _buildTopPlayersSection() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Text(
-              'Top Players',
-              style: TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.bold,
+    return Padding(
+      padding: EdgeInsets.all(14), // Reduced from 16
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Text(
+                'Top Players',
+                style: TextStyle(
+                  fontSize: 18, // Reduced from 20
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              Spacer(),
+              IconButton(
+                icon: Icon(Icons.refresh, color: Colors.deepPurple, size: 20), // Reduced size
+                onPressed: _loadTopPlayers,
+                tooltip: 'Refresh Leaderboard',
+              ),
+            ],
+          ),
+          SizedBox(height: 10), // Reduced from 12
+          if (_topPlayers.isEmpty)
+            _buildEmptyState(
+              'No Players Data',
+              Icons.leaderboard_outlined,
+              'Play tournaments to appear on leaderboard',
+            )
+          else
+            SizedBox(
+              height: 160, // Reduced from 180
+              child: ListView.builder(
+                scrollDirection: Axis.horizontal,
+                itemCount: _topPlayers.length,
+                itemBuilder: (context, index) {
+                  final player = _topPlayers[index];
+                  return _buildPlayerCard(player, index + 1);
+                },
               ),
             ),
-            Spacer(),
-            IconButton(
-              icon: Icon(Icons.refresh),
-              onPressed: _loadTopPlayers,
-              tooltip: 'Refresh Leaderboard',
-            ),
-          ],
-        ),
-        SizedBox(height: 12),
-        if (_topPlayers.isEmpty)
-          _buildEmptyState(
-            'No Players Data',
-            Icons.leaderboard,
-            'Play tournaments to appear on leaderboard',
-          )
-        else
-          Container(
-            height: 200,
-            child: ListView.builder(
-              scrollDirection: Axis.horizontal,
-              itemCount: _topPlayers.length,
-              itemBuilder: (context, index) {
-                final player = _topPlayers[index];
-                return _buildPlayerCard(player, index + 1);
-              },
-            ),
-          ),
-      ],
+        ],
+      ),
     );
   }
 
   Widget _buildRecentMatchesSection() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Text(
-              'Recent Matches',
-              style: TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.bold,
+    return Padding(
+      padding: EdgeInsets.all(14), // Reduced from 16
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Text(
+                'Recent Matches',
+                style: TextStyle(
+                  fontSize: 18, // Reduced from 20
+                  fontWeight: FontWeight.bold,
+                ),
               ),
-            ),
-            Spacer(),
-            TextButton(
-              onPressed: _loadRecentMatches,
-              child: Text(
-                'View All',
-                style: TextStyle(color: Colors.deepPurple),
+              Spacer(),
+              TextButton(
+                onPressed: _handleViewAllMatches,
+                child: Text(
+                  'View All',
+                  style: TextStyle(
+                    color: Colors.deepPurple,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 14, // Added font size
+                  ),
+                ),
               ),
-            ),
-          ],
-        ),
-        SizedBox(height: 12),
-        if (_recentMatches.isEmpty)
-          _buildEmptyState(
-            'No Recent Matches',
-            Icons.sports_esports,
-            'Join tournaments to see your matches here',
-          )
-        else
-          Card(
-            elevation: 2,
-            child: Padding(
-              padding: EdgeInsets.all(16),
-              child: Column(
-                children: _recentMatches.map((match) {
-                  return Column(
-                    children: [
-                      _buildMatchItem(match),
-                      if (_recentMatches.indexOf(match) != _recentMatches.length - 1)
-                        Divider(),
-                    ],
-                  );
-                }).toList(),
-              ),
-            ),
+            ],
           ),
-      ],
+          SizedBox(height: 10), // Reduced from 12
+          if (_recentMatches.isEmpty)
+            _buildEmptyState(
+              'No Recent Matches',
+              Icons.sports_esports_outlined,
+              'Join tournaments to see your matches here',
+            )
+          else
+            Card(
+              elevation: 2,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14), // Reduced from 16
+              ),
+              child: Padding(
+                padding: EdgeInsets.all(14), // Reduced from 16
+                child: Column(
+                  children: _recentMatches.map((match) {
+                    return Column(
+                      children: [
+                        _buildMatchItem(match),
+                        if (_recentMatches.indexOf(match) != _recentMatches.length - 1)
+                          Divider(height: 16), // Reduced from 20
+                      ],
+                    );
+                  }).toList(),
+                ),
+              ),
+            ),
+        ],
+      ),
     );
   }
 
   Widget _buildRecentTransactionsSection() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Text(
-              'Recent Transactions',
-              style: TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.bold,
+    return Padding(
+      padding: EdgeInsets.all(14), // Reduced from 16
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Text(
+                'Recent Transactions',
+                style: TextStyle(
+                  fontSize: 18, // Reduced from 20
+                  fontWeight: FontWeight.bold,
+                ),
               ),
-            ),
-            Spacer(),
-            TextButton(
-              onPressed: _loadRecentTransactions,
-              child: Text(
-                'View All',
-                style: TextStyle(color: Colors.deepPurple),
+              Spacer(),
+              TextButton(
+                onPressed: _handleViewAllTransactions,
+                child: Text(
+                  'View All',
+                  style: TextStyle(
+                    color: Colors.deepPurple,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 14, // Added font size
+                  ),
+                ),
               ),
-            ),
-          ],
-        ),
-        SizedBox(height: 12),
-        if (_recentTransactions.isEmpty)
-          _buildEmptyState(
-            'No Transactions',
-            Icons.account_balance_wallet,
-            'Your transactions will appear here',
-          )
-        else
-          Card(
-            elevation: 2,
-            child: Padding(
-              padding: EdgeInsets.all(16),
-              child: Column(
-                children: _recentTransactions.map((transaction) {
-                  return Column(
-                    children: [
-                      _buildTransactionItem(transaction),
-                      if (_recentTransactions.indexOf(transaction) != _recentTransactions.length - 1)
-                        Divider(),
-                    ],
-                  );
-                }).toList(),
-              ),
-            ),
+            ],
           ),
-      ],
+          SizedBox(height: 10), // Reduced from 12
+          if (_recentTransactions.isEmpty)
+            _buildEmptyState(
+              'No Transactions',
+              Icons.account_balance_wallet_outlined,
+              'Your transactions will appear here',
+            )
+          else
+            Card(
+              elevation: 2,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14), // Reduced from 16
+              ),
+              child: Padding(
+                padding: EdgeInsets.all(14), // Reduced from 16
+                child: Column(
+                  children: _recentTransactions.map((transaction) {
+                    return Column(
+                      children: [
+                        _buildTransactionItem(transaction),
+                        if (_recentTransactions.indexOf(transaction) != _recentTransactions.length - 1)
+                          Divider(height: 16), // Reduced from 20
+                      ],
+                    );
+                  }).toList(),
+                ),
+              ),
+            ),
+        ],
+      ),
     );
   }
 
@@ -1080,44 +1265,76 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
     final isOnlyPlayer = player['is_only_player'] ?? false;
     final totalWinning = player['total_winning'] ?? 0.0;
+    final avatar = player['avatar'];
 
     return Container(
-      width: 150,
-      margin: EdgeInsets.only(right: 12),
+      width: 130,
+      margin: EdgeInsets.only(right: 10),
       child: Card(
         elevation: 3,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(10),
         ),
         child: Padding(
-          padding: EdgeInsets.all(12),
+          padding: EdgeInsets.all(10),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Container(
-                width: 32,
-                height: 32,
-                decoration: BoxDecoration(
-                  color: medalColor,
-                  shape: BoxShape.circle,
-                ),
-                child: Center(
-                  child: Text(
-                    rank.toString(),
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 14,
+              Stack(
+                alignment: Alignment.center,
+                children: [
+                  // Avatar
+                  if (avatar != null && avatar.isNotEmpty)
+                    CircleAvatar(
+                      radius: 22,
+                      backgroundImage: NetworkImage(avatar),
+                    )
+                  else
+                    CircleAvatar(
+                      radius: 22,
+                      backgroundColor: Colors.grey[200],
+                      child: Icon(Icons.person, color: Colors.grey[400], size: 20),
+                    ),
+
+                  // Rank Badge - Positioned properly at bottom right
+                  Positioned(
+                    bottom: -2, // Adjusted position
+                    right: -2,  // Adjusted position
+                    child: Container(
+                      width: 24, // Slightly larger for better visibility
+                      height: 24,
+                      decoration: BoxDecoration(
+                        color: medalColor,
+                        shape: BoxShape.circle,
+                        border: Border.all(color: Colors.white, width: 2),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.2),
+                            blurRadius: 4,
+                            offset: Offset(0, 2),
+                          ),
+                        ],
+                      ),
+                      child: Center(
+                        child: Text(
+                          rank.toString(),
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 12, // Slightly larger font
+                          ),
+                        ),
+                      ),
                     ),
                   ),
-                ),
+                ],
               ),
-              SizedBox(height: 8),
+              SizedBox(height: 8), // Increased spacing
               Text(
                 player['name'] ?? 'Player',
                 style: TextStyle(
                   fontWeight: FontWeight.bold,
-                  fontSize: 14,
+                  fontSize: 13,
                 ),
                 textAlign: TextAlign.center,
                 maxLines: 2,
@@ -1127,7 +1344,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               Text(
                 '₹${totalWinning.toStringAsFixed(2)}',
                 style: TextStyle(
-                  fontSize: 16,
+                  fontSize: 14,
                   fontWeight: FontWeight.bold,
                   color: totalWinning > 0 ? Colors.green : Colors.grey,
                 ),
@@ -1136,7 +1353,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               Text(
                 isOnlyPlayer ? 'Only Player' : 'Top Earner',
                 style: TextStyle(
-                  fontSize: 10,
+                  fontSize: 9,
                   color: Colors.grey[600],
                 ),
               ),
@@ -1151,56 +1368,103 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final status = match['status'] ?? 'registered';
     final isWinner = match['is_winner'] ?? false;
     final position = match['position'] ?? 0;
+    final prizePool = match['prize_pool'] ?? 0.0;
+    final playersJoined = match['players_joined'] ?? 0;
 
     return ListTile(
       contentPadding: EdgeInsets.zero,
       leading: Container(
-        padding: EdgeInsets.all(8),
+        width: 40, // Reduced from 44
+        height: 40, // Reduced from 44
         decoration: BoxDecoration(
-          color: Colors.blue.withOpacity(0.1),
+          gradient: LinearGradient(
+            colors: [Colors.blue.shade100, Colors.blue.shade200],
+          ),
           shape: BoxShape.circle,
         ),
-        child: Text(
-          _getMatchStatusIcon(status, isWinner),
-          style: TextStyle(fontSize: 16),
+        child: Center(
+          child: Text(
+            _getMatchStatusIcon(status, isWinner),
+            style: TextStyle(fontSize: 16), // Reduced from 18
+          ),
         ),
       ),
       title: Text(
         match['tournament_name'] ?? 'Unknown Tournament',
         style: TextStyle(
-          fontSize: 14,
-          fontWeight: FontWeight.bold,
+          fontSize: 14, // Reduced from 15
+          fontWeight: FontWeight.w600,
         ),
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
       ),
       subtitle: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          SizedBox(height: 4),
           Text(
             '${match['game_name'] ?? 'Game'} • ₹${(match['entry_fee'] ?? 0.0).toStringAsFixed(2)}',
             style: TextStyle(
-              fontSize: 12,
+              fontSize: 12, // Reduced from 13
               color: Colors.grey[600],
             ),
           ),
-          SizedBox(height: 2),
-          Text(
-            _getMatchStatusText(status, isWinner, position),
-            style: TextStyle(
-              fontSize: 11,
-              color: _getMatchStatusColor(status, isWinner),
-              fontWeight: FontWeight.w500,
-            ),
+          SizedBox(height: 4),
+          Row(
+            children: [
+              Container(
+                padding: EdgeInsets.symmetric(horizontal: 6, vertical: 3), // Reduced padding
+                decoration: BoxDecoration(
+                  color: _getMatchStatusColor(status, isWinner).withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(6), // Reduced from 8
+                ),
+                child: Text(
+                  _getMatchStatusText(status, isWinner, position),
+                  style: TextStyle(
+                    fontSize: 10, // Reduced from 11
+                    color: _getMatchStatusColor(status, isWinner),
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ),
+              if (playersJoined > 0) ...[
+                SizedBox(width: 6), // Reduced from 8
+                Text(
+                  '$playersJoined players',
+                  style: TextStyle(
+                    fontSize: 10, // Reduced from 11
+                    color: Colors.grey[500],
+                  ),
+                ),
+              ],
+            ],
           ),
         ],
       ),
-      trailing: Text(
-        match['registered_at'] != null
-            ? _formatTimeAgo(match['registered_at'] as Timestamp)
-            : 'N/A',
-        style: TextStyle(
-          fontSize: 10,
-          color: Colors.grey[500],
-        ),
+      trailing: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Text(
+            _formatTimeAgo(match['registered_at'] as Timestamp? ?? Timestamp.now()),
+            style: TextStyle(
+              fontSize: 11, // Reduced from 12
+              color: Colors.grey[500],
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+          if (prizePool > 0) ...[
+            SizedBox(height: 4),
+            Text(
+              '₹${prizePool.toStringAsFixed(0)}',
+              style: TextStyle(
+                fontSize: 10, // Reduced from 11
+                color: Colors.green,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ],
       ),
     );
   }
@@ -1209,69 +1473,87 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final type = transaction['type'] ?? 'unknown';
     final amount = transaction['amount'] ?? 0.0;
     final status = transaction['status'] ?? 'unknown';
+    final referenceId = transaction['reference_id'];
 
-    // FIXED: Unified logic for all transaction types
     bool isPositive;
     String sign;
     Color color;
 
-    // Check if using credit/debit system
     if (type == 'credit' || type == 'debit') {
       isPositive = type == 'credit';
       sign = isPositive ? '+' : '-';
       color = isPositive ? Colors.green : Colors.red;
-    }
-    // Check deposit/winning/refund types
-    else if (type.toLowerCase() == 'deposit' ||
+    } else if (type.toLowerCase() == 'deposit' ||
         type.toLowerCase() == 'winning' ||
-        type.toLowerCase() == 'refund') {
+        type.toLowerCase() == 'refund' ||
+        type.toLowerCase() == 'bonus') {
       isPositive = true;
       sign = '+';
       color = Colors.green;
-    }
-    // Check withdrawal/debit types
-    else if (type.toLowerCase() == 'withdrawal' ||
+    } else if (type.toLowerCase() == 'withdrawal' ||
         type.toLowerCase() == 'tournament_entry') {
       isPositive = false;
       sign = '-';
       color = Colors.red;
-    }
-    // Default case - use amount to determine
-    else {
+    } else {
       isPositive = amount >= 0;
       sign = isPositive ? '+' : '-';
       color = isPositive ? Colors.green : Colors.red;
     }
 
-    // Ensure amount is positive for display
     final displayAmount = amount.abs();
 
     return ListTile(
       contentPadding: EdgeInsets.zero,
       leading: Container(
-        padding: EdgeInsets.all(8),
+        width: 40, // Reduced from 44
+        height: 40, // Reduced from 44
         decoration: BoxDecoration(
           color: _getTransactionColor(type).withOpacity(0.1),
           shape: BoxShape.circle,
         ),
-        child: Text(
-          _getTransactionIcon(type),
-          style: TextStyle(fontSize: 16),
+        child: Center(
+          child: Text(
+            _getTransactionIcon(type),
+            style: TextStyle(fontSize: 16), // Reduced from 18
+          ),
         ),
       ),
       title: Text(
         _formatTransactionType(type),
         style: TextStyle(
-          fontSize: 14,
-          fontWeight: FontWeight.bold,
+          fontSize: 14, // Reduced from 15
+          fontWeight: FontWeight.w600,
         ),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
       ),
-      subtitle: Text(
-        transaction['description'] ?? 'No description',
-        style: TextStyle(
-          fontSize: 12,
-          color: Colors.grey[600],
-        ),
+      subtitle: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(height: 2),
+          Text(
+            transaction['description'] ?? 'No description',
+            style: TextStyle(
+              fontSize: 12, // Reduced from 13
+              color: Colors.grey[600],
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          if (referenceId != null && referenceId.isNotEmpty) ...[
+            SizedBox(height: 2),
+            Text(
+              'Ref: $referenceId',
+              style: TextStyle(
+                fontSize: 10, // Reduced from 11
+                color: Colors.grey[500],
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
+        ],
       ),
       trailing: Column(
         crossAxisAlignment: CrossAxisAlignment.end,
@@ -1280,24 +1562,24 @@ class _DashboardScreenState extends State<DashboardScreen> {
           Text(
             '$sign₹${displayAmount.toStringAsFixed(2)}',
             style: TextStyle(
-              fontSize: 14,
+              fontSize: 14, // Reduced from 15
               fontWeight: FontWeight.bold,
               color: color,
             ),
           ),
-          SizedBox(height: 2),
+          SizedBox(height: 4),
           Container(
-            padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2), // Reduced padding
             decoration: BoxDecoration(
               color: _getStatusColor(status).withOpacity(0.1),
-              borderRadius: BorderRadius.circular(8),
+              borderRadius: BorderRadius.circular(6), // Reduced from 8
             ),
             child: Text(
-              status,
+              status.toUpperCase(),
               style: TextStyle(
-                fontSize: 10,
+                fontSize: 9, // Reduced from 10
                 color: _getStatusColor(status),
-                fontWeight: FontWeight.w500,
+                fontWeight: FontWeight.w600,
               ),
             ),
           ),
@@ -1306,34 +1588,31 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  Widget _buildStatCard(String title, String value, IconData icon, Color color) {
+  Widget _buildStatCard(String title, String value, IconData icon, Color color, String subtitle) {
     return Card(
-      elevation: 4,
+      elevation: 2,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(10), // Reduced from 12
       ),
       child: Padding(
-        padding: EdgeInsets.all(16),
+        padding: EdgeInsets.all(14), // Reduced from 16
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Container(
-              padding: EdgeInsets.all(8),
+              width: 44, // Reduced from 48
+              height: 44, // Reduced from 48
               decoration: BoxDecoration(
                 color: color.withOpacity(0.1),
                 shape: BoxShape.circle,
               ),
-              child: Icon(
-                icon,
-                size: 24,
-                color: color,
-              ),
+              child: Icon(icon, size: 22, color: color), // Reduced from 24
             ),
-            SizedBox(height: 8),
+            SizedBox(height: 6), // Reduced from 8
             Text(
               value,
               style: TextStyle(
-                fontSize: 18,
+                fontSize: 16, // Reduced from 18
                 fontWeight: FontWeight.bold,
                 color: color,
               ),
@@ -1342,8 +1621,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
             Text(
               title,
               style: TextStyle(
-                fontSize: 12,
+                fontSize: 11, // Reduced from 12
                 color: Colors.grey[600],
+                fontWeight: FontWeight.w500,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            SizedBox(height: 2),
+            Text(
+              subtitle,
+              style: TextStyle(
+                fontSize: 9, // Reduced from 10
+                color: Colors.grey[500],
               ),
               textAlign: TextAlign.center,
             ),
@@ -1355,34 +1644,35 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Widget _buildEmptyState(String title, IconData icon, String message) {
     return Container(
-      padding: EdgeInsets.all(20),
+      padding: EdgeInsets.all(24), // Reduced from 32
       decoration: BoxDecoration(
         color: Colors.grey[50],
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(10), // Reduced from 12
       ),
       child: Center(
         child: Column(
           children: [
             Icon(
               icon,
-              size: 50,
+              size: 42, // Reduced from 48
               color: Colors.grey[400],
             ),
-            SizedBox(height: 8),
+            SizedBox(height: 10), // Reduced from 12
             Text(
               title,
               style: TextStyle(
-                fontSize: 16,
+                fontSize: 15, // Reduced from 16
                 fontWeight: FontWeight.bold,
                 color: Colors.grey[600],
               ),
+              textAlign: TextAlign.center,
             ),
-            SizedBox(height: 4),
+            SizedBox(height: 6), // Reduced from 8
             Text(
               message,
               style: TextStyle(
                 color: Colors.grey[500],
-                fontSize: 14,
+                fontSize: 13, // Reduced from 14
               ),
               textAlign: TextAlign.center,
             ),
@@ -1454,8 +1744,169 @@ class _DashboardScreenState extends State<DashboardScreen> {
         return 'Tournament Winning';
       case 'refund':
         return 'Refund';
+      case 'bonus':
+        return 'Bonus Credit';
       default:
         return type.replaceAll('_', ' ').toUpperCase();
     }
+  }
+}
+
+// Add Money Bottom Sheet
+class AddMoneyBottomSheet extends StatelessWidget {
+  final TextEditingController amountController;
+  final double walletBalance;
+  final Function(double) onProceed;
+  final bool isProcessing;
+
+  const AddMoneyBottomSheet({
+    Key? key,
+    required this.amountController,
+    required this.walletBalance,
+    required this.onProceed,
+    required this.isProcessing,
+  }) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)), // Reduced from 20
+      ),
+      padding: EdgeInsets.all(16), // Reduced from 20
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Center(
+            child: Container(
+              width: 36, // Reduced from 40
+              height: 4,
+              decoration: BoxDecoration(
+                color: Colors.grey.shade300,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+          SizedBox(height: 16), // Reduced from 20
+          Text(
+            'Add Money',
+            style: TextStyle(
+              fontSize: 20, // Reduced from 22
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          SizedBox(height: 14), // Reduced from 16
+          TextField(
+            controller: amountController,
+            keyboardType: TextInputType.number,
+            decoration: InputDecoration(
+              labelText: 'Amount',
+              prefixText: '₹ ',
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10), // Reduced from 12
+              ),
+              filled: true,
+              fillColor: Colors.grey.shade50,
+              contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 14), // Adjusted padding
+            ),
+          ),
+          SizedBox(height: 6), // Reduced from 8
+          Text(
+            'Minimum amount: ₹100',
+            style: TextStyle(
+              fontSize: 11, // Reduced from 12
+              color: Colors.grey.shade600,
+            ),
+          ),
+          SizedBox(height: 14), // Reduced from 16
+          Container(
+            padding: EdgeInsets.all(10), // Reduced from 12
+            decoration: BoxDecoration(
+              color: Colors.green.shade50,
+              borderRadius: BorderRadius.circular(10), // Reduced from 12
+              border: Border.all(color: Colors.green.shade100),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.account_balance_wallet_rounded, color: Colors.green, size: 14), // Reduced from 16
+                SizedBox(width: 6), // Reduced from 8
+                Text(
+                  'Available balance: ₹${walletBalance.toStringAsFixed(2)}',
+                  style: TextStyle(
+                    color: Colors.green.shade800,
+                    fontWeight: FontWeight.w500,
+                    fontSize: 13, // Added font size
+                  ),
+                ),
+              ],
+            ),
+          ),
+          SizedBox(height: 16), // Reduced from 20
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: () => Navigator.pop(context),
+                  style: OutlinedButton.styleFrom(
+                    padding: EdgeInsets.symmetric(vertical: 14), // Reduced from 16
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10), // Reduced from 12
+                    ),
+                  ),
+                  child: Text(
+                    'CANCEL',
+                    style: TextStyle(fontSize: 14), // Added font size
+                  ),
+                ),
+              ),
+              SizedBox(width: 10), // Reduced from 12
+              Expanded(
+                child: ElevatedButton(
+                  onPressed: isProcessing
+                      ? null
+                      : () {
+                    final amount = double.tryParse(amountController.text) ?? 0.0;
+                    if (amount >= 100) {
+                      onProceed(amount);
+                      Navigator.pop(context);
+                    } else {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text('Minimum amount is ₹100'),
+                          backgroundColor: Colors.red,
+                        ),
+                      );
+                    }
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.deepPurple,
+                    padding: EdgeInsets.symmetric(vertical: 14), // Reduced from 16
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10), // Reduced from 12
+                    ),
+                  ),
+                  child: isProcessing
+                      ? SizedBox(
+                    height: 18, // Reduced from 20
+                    width: 18, // Reduced from 20
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                    ),
+                  )
+                      : Text(
+                    'PROCEED TO PAY',
+                    style: TextStyle(fontSize: 14), // Added font size
+                  ),
+                ),
+              ),
+            ],
+          ),
+          SizedBox(height: MediaQuery.of(context).viewInsets.bottom),
+        ],
+      ),
+    );
   }
 }

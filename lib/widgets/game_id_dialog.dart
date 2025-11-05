@@ -154,13 +154,14 @@ class _GameIdDialogState extends State<GameIdDialog> {
           _userId = user.uid;
           final userData = userDoc.data();
 
+          // Check game details
           final tournaments = userData['tournaments'] as Map<String, dynamic>? ?? {};
           final gameKey = _getGameKey(widget.gameName);
 
           if (tournaments.containsKey(gameKey)) {
             final gameDetails = tournaments[gameKey] as Map<String, dynamic>? ?? {};
-            final nameField = '${widget.gameName.toUpperCase()}_NAME';
-            final idField = '${widget.gameName.toUpperCase()}_ID';
+            final nameField = '${gameKey}_NAME';
+            final idField = '${gameKey}_ID';
 
             final playerName = gameDetails[nameField];
             final playerId = gameDetails[idField];
@@ -179,15 +180,15 @@ class _GameIdDialogState extends State<GameIdDialog> {
             }
           }
 
-          final registrationQuery = await _firestore
-              .collection('tournament_registrations')
-              .where('userId', isEqualTo: user.uid)
-              .where('tournamentId', isEqualTo: widget.tournament.id)
-              .limit(1)
-              .get();
+          // Check if already registered in user's tournament_registrations
+          final registrations = userData['tournament_registrations'] as List<dynamic>? ?? [];
+          final isRegistered = registrations.any((reg) {
+            final registration = reg as Map<String, dynamic>;
+            return registration['tournamentId'] == widget.tournament.id;
+          });
 
           setState(() {
-            _isAlreadyRegistered = registrationQuery.docs.isNotEmpty;
+            _isAlreadyRegistered = isRegistered;
           });
         }
       }
@@ -219,61 +220,100 @@ class _GameIdDialogState extends State<GameIdDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      title: _buildTitle(),
-      content: SingleChildScrollView(
+    final screenWidth = MediaQuery.of(context).size.width;
+    final isSmallScreen = screenWidth < 360;
+    final fontSizeFactor = screenWidth * 0.035;
+
+    return Dialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.of(context).size.height * 0.9,
+          maxWidth: MediaQuery.of(context).size.width * 0.95,
+        ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
-          children: _buildContent(),
+          children: [
+            // Header
+            Container(
+              padding: EdgeInsets.all(isSmallScreen ? 12 : 16),
+              decoration: BoxDecoration(
+                color: Colors.deepPurple,
+                borderRadius: BorderRadius.only(
+                  topLeft: Radius.circular(16),
+                  topRight: Radius.circular(16),
+                ),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.videogame_asset, color: Colors.white, size: isSmallScreen ? 20 : 24),
+                  SizedBox(width: isSmallScreen ? 8 : 12),
+                  Expanded(
+                    child: Text(
+                      _buildTitleText(),
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: isSmallScreen ? 16 : 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            // Content
+            Expanded(
+              child: SingleChildScrollView(
+                padding: EdgeInsets.all(isSmallScreen ? 12 : 16),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: _buildContent(),
+                ),
+              ),
+            ),
+
+            // Actions
+            Container(
+              padding: EdgeInsets.all(isSmallScreen ? 12 : 16),
+              decoration: BoxDecoration(
+                border: Border(top: BorderSide(color: Colors.grey[300]!)),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: _buildActions(),
+              ),
+            ),
+          ],
         ),
       ),
-      actions: _buildActions(),
     );
   }
 
-  Widget _buildTitle() {
+  String _buildTitleText() {
     if (_isAlreadyRegistered) {
-      return Row(
-        children: [
-          Icon(Icons.check_circle, color: Colors.green),
-          SizedBox(width: 8),
-          Text('Already Registered'),
-        ],
-      );
+      return 'Already Registered';
     } else if (_isRegistrationClosed) {
-      return Row(
-        children: [
-          Icon(Icons.error, color: Colors.orange),
-          SizedBox(width: 8),
-          Text('Registration Closed'),
-        ],
-      );
+      return 'Registration Closed';
     } else if (_isTournamentFull) {
-      return Row(
-        children: [
-          Icon(Icons.people, color: Colors.red),
-          SizedBox(width: 8),
-          Text('Tournament Full'),
-        ],
-      );
+      return 'Tournament Full';
     } else {
-      return Text(
-        _hasExistingDetails ? 'Save & Pay' : 'Enter ${widget.gameName} Details',
-        style: TextStyle(
-          fontWeight: FontWeight.bold,
-          color: Colors.deepPurple,
-        ),
-      );
+      return _hasExistingDetails ? 'Save & Pay' : 'Enter ${widget.gameName} Details';
     }
   }
 
   List<Widget> _buildContent() {
     if (_isLoading) {
       return [
-        SizedBox(height: 20),
+        SizedBox(height: 40),
         CircularProgressIndicator(),
         SizedBox(height: 16),
-        Text('Checking your details...', style: TextStyle(color: Colors.grey)),
+        Text('Checking your details...',
+          style: TextStyle(color: Colors.grey, fontSize: 16),
+          textAlign: TextAlign.center,
+        ),
       ];
     }
 
@@ -293,29 +333,43 @@ class _GameIdDialogState extends State<GameIdDialog> {
   }
 
   List<Widget> _buildAlreadyRegisteredContent() {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final isSmallScreen = screenWidth < 360;
+
     return [
-      Icon(Icons.check_circle, color: Colors.green, size: 50),
-      SizedBox(height: 16),
+      Icon(Icons.check_circle, color: Colors.green, size: isSmallScreen ? 50 : 60),
+      SizedBox(height: isSmallScreen ? 12 : 16),
       Text(
         'You are already registered!',
-        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+        style: TextStyle(
+          fontSize: isSmallScreen ? 16 : 18,
+          fontWeight: FontWeight.bold,
+        ),
         textAlign: TextAlign.center,
       ),
-      SizedBox(height: 8),
+      SizedBox(height: isSmallScreen ? 6 : 8),
       Text(
         'Tournament: ${widget.tournament.tournamentName}',
-        style: TextStyle(color: Colors.grey[600]),
+        style: TextStyle(
+          color: Colors.grey[600],
+          fontSize: isSmallScreen ? 12 : 14,
+        ),
         textAlign: TextAlign.center,
       ),
-      SizedBox(height: 8),
+      SizedBox(height: isSmallScreen ? 4 : 6),
       Text(
         'Game: ${widget.tournament.gameName}',
-        style: TextStyle(color: Colors.grey[600]),
+        style: TextStyle(
+          color: Colors.grey[600],
+          fontSize: isSmallScreen ? 12 : 14,
+        ),
+        textAlign: TextAlign.center,
       ),
       if (_existingGameDetails != null) ...[
-        SizedBox(height: 16),
+        SizedBox(height: isSmallScreen ? 16 : 20),
         Container(
-          padding: EdgeInsets.all(12),
+          width: double.infinity,
+          padding: EdgeInsets.all(isSmallScreen ? 10 : 12),
           decoration: BoxDecoration(
             color: Colors.blue[50],
             borderRadius: BorderRadius.circular(8),
@@ -326,88 +380,132 @@ class _GameIdDialogState extends State<GameIdDialog> {
             children: [
               Text(
                 'Your Registered Details:',
-                style: TextStyle(fontWeight: FontWeight.bold, color: Colors.blue[800]),
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  color: Colors.blue[800],
+                  fontSize: isSmallScreen ? 12 : 14,
+                ),
               ),
-              SizedBox(height: 8),
-              Text('Player Name: ${_existingGameDetails!['playerName']}'),
-              Text('Game ID: ${_existingGameDetails!['playerId']}'),
+              SizedBox(height: isSmallScreen ? 6 : 8),
+              Text(
+                'Player Name: ${_existingGameDetails!['playerName']}',
+                style: TextStyle(fontSize: isSmallScreen ? 12 : 14, color: Colors.black),
+              ),
+              SizedBox(height: isSmallScreen ? 4 : 6),
+              Text(
+                'Game ID: ${_existingGameDetails!['playerId']}',
+                style: TextStyle(fontSize: isSmallScreen ? 12 : 14, color: Colors.black),
+              ),
             ],
           ),
         ),
       ],
-      SizedBox(height: 16),
+      SizedBox(height: isSmallScreen ? 16 : 20),
       _buildTournamentInfo(),
-      SizedBox(height: 20),
-      ElevatedButton.icon(
-        onPressed: () {
-          Navigator.pop(context);
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (context) => TournamentDetailsScreen(
-                tournament: widget.tournament,
-                playerName: _existingGameDetails!['playerName'] ?? '',
-                playerId: _existingGameDetails!['playerId'] ?? '',
+      SizedBox(height: isSmallScreen ? 16 : 20),
+      SizedBox(
+        width: double.infinity,
+        child: ElevatedButton.icon(
+          onPressed: () {
+            Navigator.pop(context);
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => TournamentDetailsScreen(
+                  tournament: widget.tournament,
+                  playerName: _existingGameDetails?['playerName'] ?? '',
+                  playerId: _existingGameDetails?['playerId'] ?? '',
+                ),
               ),
+            );
+          },
+          icon: Icon(Icons.tour, size: isSmallScreen ? 18 : 20),
+          label: Text(
+            'View Tournament Details',
+            style: TextStyle(fontSize: isSmallScreen ? 14 : 16),
+          ),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.deepPurple,
+            foregroundColor: Colors.white,
+            padding: EdgeInsets.symmetric(
+              horizontal: isSmallScreen ? 16 : 20,
+              vertical: isSmallScreen ? 10 : 12,
             ),
-          );
-        },
-        icon: Icon(Icons.tour),
-        label: Text('View Tournament Details'),
-        style: ElevatedButton.styleFrom(
-          backgroundColor: Colors.deepPurple,
-          foregroundColor: Colors.white,
-          padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+          ),
         ),
       ),
     ];
   }
 
   List<Widget> _buildRegistrationClosedContent() {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final isSmallScreen = screenWidth < 360;
+
     return [
-      Icon(Icons.event_busy, color: Colors.orange, size: 50),
-      SizedBox(height: 16),
+      Icon(Icons.event_busy, color: Colors.orange, size: isSmallScreen ? 50 : 60),
+      SizedBox(height: isSmallScreen ? 12 : 16),
       Text(
         'Registration Closed',
-        style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.orange),
+        style: TextStyle(
+          fontSize: isSmallScreen ? 18 : 20,
+          fontWeight: FontWeight.bold,
+          color: Colors.orange,
+        ),
         textAlign: TextAlign.center,
       ),
-      SizedBox(height: 8),
+      SizedBox(height: isSmallScreen ? 8 : 12),
       Text(
         'The registration period for this tournament has ended.',
-        style: TextStyle(color: Colors.grey[600]),
+        style: TextStyle(
+          color: Colors.grey[600],
+          fontSize: isSmallScreen ? 12 : 14,
+        ),
         textAlign: TextAlign.center,
       ),
-      SizedBox(height: 16),
+      SizedBox(height: isSmallScreen ? 16 : 20),
       _buildTournamentInfo(),
     ];
   }
 
   List<Widget> _buildTournamentFullContent() {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final isSmallScreen = screenWidth < 360;
+
     return [
-      Icon(Icons.people_outline, color: Colors.red, size: 50),
-      SizedBox(height: 16),
+      Icon(Icons.people_outline, color: Colors.red, size: isSmallScreen ? 50 : 60),
+      SizedBox(height: isSmallScreen ? 12 : 16),
       Text(
         'Tournament Full',
-        style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.red),
+        style: TextStyle(
+          fontSize: isSmallScreen ? 18 : 20,
+          fontWeight: FontWeight.bold,
+          color: Colors.red,
+        ),
         textAlign: TextAlign.center,
       ),
-      SizedBox(height: 8),
+      SizedBox(height: isSmallScreen ? 8 : 12),
       Text(
         'All ${widget.tournament.totalSlots} slots have been filled.',
-        style: TextStyle(color: Colors.grey[600]),
+        style: TextStyle(
+          color: Colors.grey[600],
+          fontSize: isSmallScreen ? 12 : 14,
+        ),
         textAlign: TextAlign.center,
       ),
-      SizedBox(height: 16),
+      SizedBox(height: isSmallScreen ? 16 : 20),
       _buildTournamentInfo(),
     ];
   }
 
   List<Widget> _buildRegistrationForm() {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final isSmallScreen = screenWidth < 360;
+
     return [
       if (_hasExistingDetails && !_showChangeRequest) ...[
         Container(
-          padding: EdgeInsets.all(12),
+          width: double.infinity,
+          padding: EdgeInsets.all(isSmallScreen ? 10 : 12),
           decoration: BoxDecoration(
             color: Colors.green[50],
             borderRadius: BorderRadius.circular(8),
@@ -415,140 +513,179 @@ class _GameIdDialogState extends State<GameIdDialog> {
           ),
           child: Row(
             children: [
-              Icon(Icons.info, color: Colors.green),
-              SizedBox(width: 8),
+              Icon(Icons.info, color: Colors.green, size: isSmallScreen ? 16 : 18),
+              SizedBox(width: isSmallScreen ? 6 : 8),
               Expanded(
                 child: Text(
                   'We found your saved ${widget.gameName} details',
-                  style: TextStyle(color: Colors.green[800]),
+                  style: TextStyle(
+                    color: Colors.green[800],
+                    fontSize: isSmallScreen ? 12 : 14,
+                  ),
                 ),
               ),
             ],
           ),
         ),
-        SizedBox(height: 16),
+        SizedBox(height: isSmallScreen ? 12 : 16),
       ],
       Text(
         'Register for "${widget.tournament.tournamentName}"',
-        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+        style: TextStyle(
+          fontSize: isSmallScreen ? 16 : 18,
+          fontWeight: FontWeight.bold,
+        ),
         textAlign: TextAlign.center,
       ),
-      SizedBox(height: 8),
+      SizedBox(height: isSmallScreen ? 6 : 8),
       Text(
         'Game: ${widget.tournament.gameName}',
-        style: TextStyle(color: Colors.grey[600]),
+        style: TextStyle(
+          color: Colors.grey[600],
+          fontSize: isSmallScreen ? 12 : 14,
+        ),
+        textAlign: TextAlign.center,
       ),
-      SizedBox(height: 16),
+      SizedBox(height: isSmallScreen ? 16 : 20),
       _buildTournamentInfo(),
-      SizedBox(height: 20),
+      SizedBox(height: isSmallScreen ? 16 : 20),
 
+      // Player Name Field
       TextField(
         controller: _playerNameController,
         enabled: !_hasExistingDetails || _showChangeRequest,
+        style: TextStyle(fontSize: isSmallScreen ? 14 : 16),
         decoration: InputDecoration(
           labelText: 'Player Name',
+          labelStyle: TextStyle(fontSize: isSmallScreen ? 14 : 16),
           border: OutlineInputBorder(),
           hintText: 'Enter your in-game name',
-          prefixIcon: Icon(Icons.person),
+          prefixIcon: Icon(Icons.person, size: isSmallScreen ? 18 : 20),
           suffixIcon: _hasExistingDetails && !_showChangeRequest
-              ? Icon(Icons.lock, color: Colors.grey)
+              ? Icon(Icons.lock, color: Colors.grey, size: isSmallScreen ? 16 : 18)
               : null,
         ),
         readOnly: _hasExistingDetails && !_showChangeRequest,
       ),
-      SizedBox(height: 16),
+      SizedBox(height: isSmallScreen ? 12 : 16),
 
+      // Game ID Field
       TextField(
         controller: _playerIdController,
         enabled: !_hasExistingDetails || _showChangeRequest,
+        style: TextStyle(fontSize: isSmallScreen ? 14 : 16),
         decoration: InputDecoration(
           labelText: '${widget.gameName} ID',
+          labelStyle: TextStyle(fontSize: isSmallScreen ? 14 : 16),
           border: OutlineInputBorder(),
           hintText: 'Enter your game ID/username',
-          prefixIcon: Icon(Icons.videogame_asset),
+          prefixIcon: Icon(Icons.videogame_asset, size: isSmallScreen ? 18 : 20),
           suffixIcon: _hasExistingDetails && !_showChangeRequest
-              ? Icon(Icons.lock, color: Colors.grey)
+              ? Icon(Icons.lock, color: Colors.grey, size: isSmallScreen ? 16 : 18)
               : null,
         ),
         readOnly: _hasExistingDetails && !_showChangeRequest,
       ),
 
       if (!_showChangeRequest) ...[
-        SizedBox(height: 20),
+        SizedBox(height: isSmallScreen ? 16 : 20),
         _buildPaymentOptions(),
       ],
 
       if (_hasExistingDetails && !_showChangeRequest) ...[
-        SizedBox(height: 16),
-        OutlinedButton.icon(
-          onPressed: _showChangeRequestForm,
-          icon: Icon(Icons.edit, size: 18),
-          label: Text('Request to Change Game Details'),
-          style: OutlinedButton.styleFrom(
-            foregroundColor: Colors.orange,
-            side: BorderSide(color: Colors.orange),
+        SizedBox(height: isSmallScreen ? 12 : 16),
+        SizedBox(
+          width: double.infinity,
+          child: OutlinedButton.icon(
+            onPressed: _showChangeRequestForm,
+            icon: Icon(Icons.edit, size: isSmallScreen ? 16 : 18),
+            label: Text(
+              'Request to Change Game Details',
+              style: TextStyle(fontSize: isSmallScreen ? 12 : 14),
+            ),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: Colors.orange,
+              side: BorderSide(color: Colors.orange),
+              padding: EdgeInsets.symmetric(vertical: isSmallScreen ? 10 : 12),
+            ),
           ),
         ),
-        SizedBox(height: 8),
+        SizedBox(height: isSmallScreen ? 6 : 8),
         Text(
           'Changes may take 3-4 working days to process',
-          style: TextStyle(fontSize: 12, color: Colors.orange),
+          style: TextStyle(
+            fontSize: isSmallScreen ? 10 : 12,
+            color: Colors.orange,
+          ),
           textAlign: TextAlign.center,
         ),
       ],
 
-      SizedBox(height: 16),
+      SizedBox(height: isSmallScreen ? 12 : 16),
       _buildWarningNote(),
 
       if (_isLoading) ...[
-        SizedBox(height: 16),
+        SizedBox(height: isSmallScreen ? 12 : 16),
         CircularProgressIndicator(),
-        SizedBox(height: 16),
-        Text('Processing...', style: TextStyle(color: Colors.grey)),
+        SizedBox(height: isSmallScreen ? 12 : 16),
+        Text(
+          'Processing...',
+          style: TextStyle(
+            color: Colors.grey,
+            fontSize: isSmallScreen ? 12 : 14,
+          ),
+        ),
       ],
     ];
   }
 
   Widget _buildPaymentOptions() {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final isSmallScreen = screenWidth < 360;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
           'Payment Method',
           style: TextStyle(
-            fontSize: 16,
+            fontSize: isSmallScreen ? 14 : 16,
             fontWeight: FontWeight.bold,
             color: Colors.deepPurple,
           ),
         ),
-        SizedBox(height: 12),
+        SizedBox(height: isSmallScreen ? 8 : 12),
         _buildPaymentOption(
           value: 'wallet',
           title: 'Wallet Balance',
           subtitle: 'Use your available wallet balance',
           icon: Icons.account_balance_wallet,
           balance: _walletBalance,
+          isSmallScreen: isSmallScreen,
         ),
-        SizedBox(height: 8),
+        SizedBox(height: isSmallScreen ? 6 : 8),
         _buildPaymentOption(
           value: 'razorpay',
           title: 'Razorpay UPI/Cards',
           subtitle: 'Pay using UPI, Credit/Debit Cards',
           icon: Icons.credit_card,
+          isSmallScreen: isSmallScreen,
         ),
-        SizedBox(height: 8),
+        SizedBox(height: isSmallScreen ? 6 : 8),
         _buildPaymentOption(
           value: 'paytm',
           title: 'PayTM',
           subtitle: 'Pay using PayTM Wallet or UPI',
           icon: Icons.payment,
+          isSmallScreen: isSmallScreen,
         ),
-        SizedBox(height: 8),
+        SizedBox(height: isSmallScreen ? 6 : 8),
         _buildPaymentOption(
           value: 'phonepe',
           title: 'PhonePe',
           subtitle: 'Pay using PhonePe UPI',
           icon: Icons.phone_android,
+          isSmallScreen: isSmallScreen,
         ),
       ],
     );
@@ -559,6 +696,7 @@ class _GameIdDialogState extends State<GameIdDialog> {
     required String title,
     required String subtitle,
     required IconData icon,
+    required bool isSmallScreen,
     double? balance,
   }) {
     final isSelected = _selectedPaymentMethod == value;
@@ -566,6 +704,7 @@ class _GameIdDialogState extends State<GameIdDialog> {
     final hasSufficientBalance = isWallet ? (_walletBalance >= widget.tournament.entryFee) : true;
 
     return Container(
+      width: double.infinity,
       decoration: BoxDecoration(
         border: Border.all(
           color: isSelected ? Colors.deepPurple : Colors.grey[300]!,
@@ -589,13 +728,20 @@ class _GameIdDialogState extends State<GameIdDialog> {
           children: [
             Row(
               children: [
-                Icon(icon, size: 20, color: isSelected ? Colors.deepPurple : Colors.grey[700]),
-                SizedBox(width: 8),
-                Text(
-                  title,
-                  style: TextStyle(
-                    fontWeight: FontWeight.w600,
-                    color: isSelected ? Colors.deepPurple : Colors.grey[800],
+                Icon(
+                  icon,
+                  size: isSmallScreen ? 18 : 20,
+                  color: isSelected ? Colors.deepPurple : Colors.grey[700],
+                ),
+                SizedBox(width: isSmallScreen ? 6 : 8),
+                Expanded(
+                  child: Text(
+                    title,
+                    style: TextStyle(
+                      fontWeight: FontWeight.w600,
+                      color: isSelected ? Colors.deepPurple : Colors.grey[800],
+                      fontSize: isSmallScreen ? 14 : 16,
+                    ),
                   ),
                 ),
               ],
@@ -605,7 +751,7 @@ class _GameIdDialogState extends State<GameIdDialog> {
               Text(
                 'Balance: ₹${balance.toStringAsFixed(2)}',
                 style: TextStyle(
-                  fontSize: 12,
+                  fontSize: isSmallScreen ? 11 : 12,
                   color: hasSufficientBalance ? Colors.green : Colors.red,
                   fontWeight: FontWeight.w500,
                 ),
@@ -615,11 +761,14 @@ class _GameIdDialogState extends State<GameIdDialog> {
         ),
         subtitle: Text(
           subtitle,
-          style: TextStyle(fontSize: 12),
+          style: TextStyle(fontSize: isSmallScreen ? 11 : 12),
         ),
         secondary: isWallet && !hasSufficientBalance
             ? Container(
-          padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          padding: EdgeInsets.symmetric(
+            horizontal: isSmallScreen ? 6 : 8,
+            vertical: isSmallScreen ? 2 : 4,
+          ),
           decoration: BoxDecoration(
             color: Colors.orange[50],
             borderRadius: BorderRadius.circular(4),
@@ -628,7 +777,7 @@ class _GameIdDialogState extends State<GameIdDialog> {
           child: Text(
             'Low Balance',
             style: TextStyle(
-              fontSize: 10,
+              fontSize: isSmallScreen ? 9 : 10,
               color: Colors.orange[800],
               fontWeight: FontWeight.bold,
             ),
@@ -636,14 +785,21 @@ class _GameIdDialogState extends State<GameIdDialog> {
         )
             : null,
         controlAffinity: ListTileControlAffinity.trailing,
-        contentPadding: EdgeInsets.symmetric(horizontal: 8),
+        contentPadding: EdgeInsets.symmetric(
+          horizontal: isSmallScreen ? 6 : 8,
+          vertical: isSmallScreen ? 2 : 4,
+        ),
       ),
     );
   }
 
   Widget _buildWarningNote() {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final isSmallScreen = screenWidth < 360;
+
     return Container(
-      padding: EdgeInsets.all(12),
+      width: double.infinity,
+      padding: EdgeInsets.all(isSmallScreen ? 10 : 12),
       decoration: BoxDecoration(
         color: Colors.red[50],
         borderRadius: BorderRadius.circular(8),
@@ -652,13 +808,13 @@ class _GameIdDialogState extends State<GameIdDialog> {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(Icons.warning, color: Colors.red, size: 20),
-          SizedBox(width: 8),
+          Icon(Icons.warning, color: Colors.red, size: isSmallScreen ? 18 : 20),
+          SizedBox(width: isSmallScreen ? 6 : 8),
           Expanded(
             child: Text(
               'Important: If your username and ID are incorrect, you might not receive any of your winnings. Please double-check before proceeding.',
               style: TextStyle(
-                fontSize: 12,
+                fontSize: isSmallScreen ? 11 : 12,
                 color: Colors.red[800],
                 fontWeight: FontWeight.w500,
               ),
@@ -670,8 +826,12 @@ class _GameIdDialogState extends State<GameIdDialog> {
   }
 
   Widget _buildTournamentInfo() {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final isSmallScreen = screenWidth < 360;
+
     return Container(
-      padding: EdgeInsets.all(12),
+      width: double.infinity,
+      padding: EdgeInsets.all(isSmallScreen ? 10 : 12),
       decoration: BoxDecoration(
         color: Colors.grey[50],
         borderRadius: BorderRadius.circular(8),
@@ -679,51 +839,78 @@ class _GameIdDialogState extends State<GameIdDialog> {
       ),
       child: Column(
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text('Entry Fee:', style: TextStyle(fontWeight: FontWeight.bold)),
-              Text(
-                '₹${widget.tournament.entryFee}',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.deepPurple),
-              ),
-            ],
+          _buildTournamentInfoRow(
+            'Entry Fee:',
+            '₹${widget.tournament.entryFee}',
+            valueStyle: TextStyle(
+              fontSize: isSmallScreen ? 14 : 16,
+              fontWeight: FontWeight.bold,
+              color: Colors.deepPurple,
+            ),
+            isSmallScreen: isSmallScreen,
           ),
-          SizedBox(height: 8),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text('Slots:', style: TextStyle(fontWeight: FontWeight.bold)),
-              Text(
-                '${widget.tournament.registeredPlayers}/${widget.tournament.totalSlots}',
-                style: TextStyle(color: Colors.grey[600]),
-              ),
-            ],
+          SizedBox(height: isSmallScreen ? 6 : 8),
+          _buildTournamentInfoRow(
+            'Slots:',
+            '${widget.tournament.registeredPlayers}/${widget.tournament.totalSlots}',
+            isSmallScreen: isSmallScreen,
           ),
-          SizedBox(height: 8),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text('Registration Ends:', style: TextStyle(fontWeight: FontWeight.bold)),
-              Text(
-                _formatDate(widget.tournament.registrationEnd.toDate()),
-                style: TextStyle(color: Colors.grey[600]),
-              ),
-            ],
+          SizedBox(height: isSmallScreen ? 6 : 8),
+          _buildTournamentInfoRow(
+            'Registration Ends:',
+            _formatDate(widget.tournament.registrationEnd.toDate()),
+            isSmallScreen: isSmallScreen,
           ),
-          SizedBox(height: 8),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text('Prize Pool:', style: TextStyle(fontWeight: FontWeight.bold)),
-              Text(
-                '₹${widget.tournament.winningPrize}',
-                style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold),
-              ),
-            ],
+          SizedBox(height: isSmallScreen ? 6 : 8),
+          _buildTournamentInfoRow(
+            'Prize Pool:',
+            '₹${widget.tournament.winningPrize}',
+            valueStyle: TextStyle(
+              color: Colors.green,
+              fontWeight: FontWeight.bold,
+              fontSize: isSmallScreen ? 14 : 16,
+            ),
+            isSmallScreen: isSmallScreen,
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildTournamentInfoRow(
+      String label,
+      String value, {
+        TextStyle? valueStyle,
+        required bool isSmallScreen,
+      }) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Flexible(
+          child: Text(
+            label,
+            style: TextStyle(
+              fontWeight: FontWeight.bold,
+              fontSize: isSmallScreen ? 12 : 14,
+              color: Colors.black
+            ),
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+        SizedBox(width: isSmallScreen ? 6 : 8),
+        Flexible(
+          child: Text(
+            value,
+            style: valueStyle ??
+                TextStyle(
+                  color: Colors.grey[600],
+                  fontSize: isSmallScreen ? 12 : 14,
+                ),
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.right,
+          ),
+        ),
+      ],
     );
   }
 
@@ -732,6 +919,9 @@ class _GameIdDialogState extends State<GameIdDialog> {
   }
 
   void _showChangeRequestForm() {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final isSmallScreen = screenWidth < 360;
+
     setState(() {
       _showChangeRequest = true;
     });
@@ -741,30 +931,38 @@ class _GameIdDialogState extends State<GameIdDialog> {
       builder: (context) => AlertDialog(
         title: Row(
           children: [
-            Icon(Icons.warning, color: Colors.orange),
-            SizedBox(width: 8),
-            Text('Change Request'),
+            Icon(Icons.warning, color: Colors.orange, size: isSmallScreen ? 20 : 24),
+            SizedBox(width: isSmallScreen ? 6 : 8),
+            Text(
+              'Change Request',
+              style: TextStyle(fontSize: isSmallScreen ? 16 : 18),
+            ),
           ],
         ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'You are requesting to change your game details. Please note:',
-              style: TextStyle(fontSize: 14),
-            ),
-            SizedBox(height: 12),
-            _buildBulletPoint('Changes may take 3-4 working days to process'),
-            _buildBulletPoint('You cannot participate in tournaments during this period'),
-            _buildBulletPoint('Your current winnings will be transferred to your new account'),
-            _buildBulletPoint('All changes are subject to admin approval'),
-          ],
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'You are requesting to change your game details. Please note:',
+                style: TextStyle(fontSize: isSmallScreen ? 12 : 14),
+              ),
+              SizedBox(height: isSmallScreen ? 8 : 12),
+              _buildBulletPoint('Changes may take 3-4 working days to process', isSmallScreen),
+              _buildBulletPoint('You cannot participate in tournaments during this period', isSmallScreen),
+              _buildBulletPoint('Your current winnings will be transferred to your new account', isSmallScreen),
+              _buildBulletPoint('All changes are subject to admin approval', isSmallScreen),
+            ],
+          ),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: Text('CANCEL'),
+            child: Text(
+              'CANCEL',
+              style: TextStyle(fontSize: isSmallScreen ? 12 : 14),
+            ),
           ),
           ElevatedButton(
             onPressed: () {
@@ -773,58 +971,96 @@ class _GameIdDialogState extends State<GameIdDialog> {
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.orange,
             ),
-            child: Text('PROCEED'),
+            child: Text(
+              'PROCEED',
+              style: TextStyle(fontSize: isSmallScreen ? 12 : 14),
+            ),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildBulletPoint(String text) {
+  Widget _buildBulletPoint(String text, bool isSmallScreen) {
     return Padding(
       padding: EdgeInsets.symmetric(vertical: 4),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('• ', style: TextStyle(fontSize: 14)),
-          Expanded(child: Text(text, style: TextStyle(fontSize: 14))),
+          Text('• ', style: TextStyle(fontSize: isSmallScreen ? 12 : 14)),
+          Expanded(
+            child: Text(
+              text,
+              style: TextStyle(fontSize: isSmallScreen ? 12 : 14),
+            ),
+          ),
         ],
       ),
     );
   }
 
   List<Widget> _buildActions() {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final isSmallScreen = screenWidth < 360;
+
     if (_isAlreadyRegistered || _isRegistrationClosed || _isTournamentFull) {
       return [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: Text('OK', style: TextStyle(color: Colors.deepPurple)),
+        Expanded(
+          child: SizedBox(
+            width: double.infinity,
+            child: ElevatedButton(
+              onPressed: () => Navigator.pop(context),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.deepPurple,
+                foregroundColor: Colors.white,
+                padding: EdgeInsets.symmetric(vertical: isSmallScreen ? 10 : 12),
+              ),
+              child: Text(
+                'OK',
+                style: TextStyle(fontSize: isSmallScreen ? 14 : 16),
+              ),
+            ),
+          ),
         ),
       ];
     }
 
     return [
-      TextButton(
-        onPressed: _isLoading ? null : () {
-          print('❌ GameIdDialog cancelled');
-          Navigator.pop(context);
-        },
-        child: Text(
-          'CANCEL',
-          style: TextStyle(color: Colors.grey[700]),
+      Expanded(
+        child: TextButton(
+          onPressed: _isLoading ? null : () {
+            print('❌ GameIdDialog cancelled');
+            Navigator.pop(context);
+          },
+          style: TextButton.styleFrom(
+            padding: EdgeInsets.symmetric(vertical: isSmallScreen ? 10 : 12),
+          ),
+          child: Text(
+            'CANCEL',
+            style: TextStyle(
+              color: Colors.grey[700],
+              fontWeight: FontWeight.bold,
+              fontSize: isSmallScreen ? 14 : 16,
+            ),
+          ),
         ),
       ),
-      ElevatedButton(
-        onPressed: _isLoading ? null : _onConfirmPressed,
-        style: ElevatedButton.styleFrom(
-          backgroundColor: _showChangeRequest ? Colors.orange : Colors.deepPurple,
-          foregroundColor: Colors.white,
-        ),
-        child: Text(
-          _getButtonText(),
-          style: TextStyle(
-            color: Colors.white,
-            fontWeight: FontWeight.bold,
+      SizedBox(width: isSmallScreen ? 8 : 12),
+      Expanded(
+        child: ElevatedButton(
+          onPressed: _isLoading ? null : _onConfirmPressed,
+          style: ElevatedButton.styleFrom(
+            backgroundColor: _showChangeRequest ? Colors.orange : Colors.deepPurple,
+            foregroundColor: Colors.white,
+            padding: EdgeInsets.symmetric(vertical: isSmallScreen ? 10 : 12),
+          ),
+          child: Text(
+            _getButtonText(),
+            style: TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.bold,
+              fontSize: isSmallScreen ? 14 : 16,
+            ),
           ),
         ),
       ),
@@ -984,18 +1220,31 @@ class _GameIdDialogState extends State<GameIdDialog> {
         if (userQuery.docs.isNotEmpty) {
           final userDoc = userQuery.docs.first;
           final userName = userDoc.id;
+          final userData = userDoc.data();
 
           final gameKey = _getGameKey(widget.gameName);
-          final nameField = '${widget.gameName.toUpperCase()}_NAME';
-          final idField = '${widget.gameName.toUpperCase()}_ID';
+          final nameField = '${gameKey}_NAME';
+          final idField = '${gameKey}_ID';
 
-          await _firestore.collection('users').doc(userName).update({
-            'tournaments.$gameKey.$nameField': playerName,
-            'tournaments.$gameKey.$idField': playerId,
-            'updatedAt': FieldValue.serverTimestamp(),
-          });
+          // Check if data already exists and is the same
+          final tournaments = userData['tournaments'] as Map<String, dynamic>? ?? {};
+          final gameDetails = tournaments[gameKey] as Map<String, dynamic>? ?? {};
 
-          print('✅ User game details saved successfully');
+          final existingName = gameDetails[nameField] as String? ?? '';
+          final existingId = gameDetails[idField] as String? ?? '';
+
+          // Only update if data is different or empty
+          if (existingName != playerName || existingId != playerId) {
+            await _firestore.collection('users').doc(userName).update({
+              'tournaments.$gameKey.$nameField': playerName,
+              'tournaments.$gameKey.$idField': playerId,
+              'updatedAt': FieldValue.serverTimestamp(),
+            });
+            print('✅ User game details updated for $gameKey');
+          } else {
+            print('ℹ️ Game details already exist and are the same for $gameKey');
+          }
+
           return true;
         }
       }
@@ -1268,10 +1517,11 @@ class _GameIdDialogState extends State<GameIdDialog> {
       if (user != null && _userName != null) {
         final batch = _firestore.batch();
 
-        final registrationRef = _firestore.collection('tournament_registrations').doc();
-        batch.set(registrationRef, {
-          'userId': user.uid,
-          'userName': _userName,
+        // 1. Add registration to user's tournament_registrations array
+        final userRef = _firestore.collection('users').doc(_userName!);
+
+        // Create registration object - use DateTime.now() instead of FieldValue.serverTimestamp()
+        final registrationData = {
           'tournamentId': widget.tournament.id,
           'tournamentName': widget.tournament.tournamentName,
           'gameName': widget.tournament.gameName,
@@ -1280,10 +1530,17 @@ class _GameIdDialogState extends State<GameIdDialog> {
           'entryFee': widget.tournament.entryFee,
           'paymentId': paymentId,
           'paymentMethod': _selectedPaymentMethod,
-          'registeredAt': FieldValue.serverTimestamp(),
+          'registeredAt': DateTime.now(), // Use client timestamp instead
           'status': 'registered',
+        };
+
+        // Add to user's tournament_registrations array
+        batch.update(userRef, {
+          'tournament_registrations': FieldValue.arrayUnion([registrationData]),
+          'updatedAt': FieldValue.serverTimestamp(), // This is allowed here
         });
 
+        // 2. Update tournament count
         final tournamentRef = _firestore.collection('tournaments').doc(widget.tournament.id);
         batch.update(tournamentRef, {
           'registered_players': FieldValue.increment(1),
@@ -1292,7 +1549,7 @@ class _GameIdDialogState extends State<GameIdDialog> {
 
         await batch.commit();
 
-        print('🎉 Tournament registration saved successfully!');
+        print('🎉 Tournament registration saved successfully in user document!');
 
         // IMPORTANT: Close the dialog FIRST before showing any messages
         if (mounted) {
